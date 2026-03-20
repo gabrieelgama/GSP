@@ -1,335 +1,398 @@
-# GSP v0.1 Specification
+# GSP v0.2 Specification
+## Globalized Secure Protocol
 
-**Protocol Name:** Globalized Secure Protocol  
-**Short Name:** GSP  
-**Version:** 0.1  
-**Status:** Draft / Experimental
-
----
-
-## 1. Abstract
-
-The Globalized Secure Protocol (GSP) is a next-generation binary communication protocol designed to unify transport and application behaviors into a compact, encrypted, and low-latency architecture. GSP is built for secure, efficient, and resilient communication with native support for peer-to-peer connectivity, minimal overhead, and protocol-level authentication.
-
-This document defines the initial draft specification for GSP version 0.1.
+**Version:** 0.2  
+**Status:** Draft / Experimental  
+**License:** Apache License 2.0  
 
 ---
 
-## 2. Goals
+# 1. Abstract
 
-GSP v0.1 is designed with the following goals:
+The Globalized Secure Protocol (GSP) is a next-generation binary communication protocol that unifies transport and application layers into a single secure and efficient system.
+
+GSP provides:
 
 - Ultra-low latency communication
-- Binary packet-based exchange
-- Built-in end-to-end encryption
-- Mandatory authentication before application data processing
-- Compact overhead and efficient bandwidth usage
-- Native support for direct peer-to-peer communication
-- Extensible protocol structure for future versions
+- Binary packet structure
+- Mandatory authentication
+- End-to-end encryption
+- Native P2P support
+- Built-in anti-replay and MITM protection
 
 ---
 
-## 3. Protocol Model
+# 2. Design Goals
 
-GSP is a hybrid protocol that combines transport-layer and application-layer responsibilities into a unified model.
-
-### 3.1 Modes of Operation
-
-GSP supports two conceptual modes:
-
-- **Native Mode**: direct GSP communication over its own transport
-- **Compatibility Mode**: GSP encapsulated over HTTP/2, HTTP/3, or QUIC through a translator layer
-
-### 3.2 Communication Style
-
-Communication in GSP is performed through structured binary packets.  
-Each packet contains a message type, integrity information, and encrypted payload data.
+- Latency target: 2–5 ms (authenticated sessions)
+- Minimal overhead (5–10%)
+- Strong cryptographic guarantees
+- Transport independence
+- Resistance to traffic analysis
+- Extensible architecture
 
 ---
 
-## 4. Message Types
+# 3. Prior Art Statement
 
-The following message types are defined in GSP v0.1:
+This document constitutes public disclosure of:
 
-| Code     | Name        | Description |
-|----------|-------------|-------------|
-| 0x00001  | HANDSHAKE   | Connection initialization |
-| 0x00002  | DATA        | Application data packet |
-| 0x00003  | KEEP_ALIVE  | Connection keep-alive |
-| 0x00004  | ERROR       | Error signaling |
-| 0x00005  | CLOSE       | Connection termination |
+- Handshake design
+- Transcript binding model
+- Packet structure
+- Authentication model
+- Obfuscation mechanisms
 
-Future versions may extend this table.
+GSP is an original protocol design and does not directly implement TLS, QUIC, or HTTP.
 
 ---
 
-## 5. Packet Structure
+# 4. Protocol Model
 
-GSP packets are binary and use network byte order (big-endian).
+GSP combines:
 
-### 5.1 Generic Packet Layout
+- Transport layer (delivery)
+- Application layer (data)
 
-| Field         | Size      | Description |
-|---------------|-----------|-------------|
-| Version       | 1 byte    | Protocol version |
-| Type          | 2 bytes   | Message type |
-| Flags         | 2 bytes   | Control flags |
-| Length        | 4 bytes   | Payload length |
-| Session ID    | 8 bytes   | Session identifier |
-| Sequence      | 8 bytes   | Packet sequence number |
-| CRC32         | 4 bytes   | Integrity check |
-| Payload       | Variable  | Encrypted payload |
+## Modes
 
-### 5.2 Notes
-
-- All multi-byte integers are big-endian
-- Payload contents are encrypted
-- Header visibility may be reduced or obfuscated in later versions
-- CRC32 is used for fast integrity pre-checks, not as a replacement for authenticated encryption
+- **Native Mode:** `gsp://`
+- **Compatibility Mode:** `gsp+http://` (HTTP/2, HTTP/3, QUIC)
 
 ---
 
-## 6. Handshake
+# 5. Message Types
 
-GSP v0.1 defines a secure authenticated handshake.
-
-### 6.1 Objectives
-
-The handshake must:
-
-- establish ephemeral session keys
-- authenticate the server cryptographically
-- bind the handshake transcript
-- verify client proof before full session activation
-- prevent replay and man-in-the-middle attacks
-
-### 6.2 Initial Flow
-
-A simplified flow is defined as follows:
-
-1. **ClientHello**
-   - protocol version
-   - client ephemeral key share
-   - supported cipher suites
-   - random nonce
-   - optional capability flags
-
-2. **ServerHello**
-   - selected protocol parameters
-   - server ephemeral key share
-   - server authentication proof
-   - server nonce
-   - challenge seed
-
-3. **ClientProof**
-   - challenge response
-   - transcript-bound authentication proof
-   - token or session authorization material
-
-4. **ServerAccept**
-   - session confirmation
-   - final authenticated acknowledgment
-
-### 6.3 Handshake Security Requirements
-
-The following requirements apply:
-
-- Server identity **must** be authenticated
-- Transcript binding **must** cover all handshake messages
-- Session keys **must** be derived from the authenticated handshake transcript
-- Handshake compression **must not** be trusted before authentication
-- The connection is not fully established until the final authenticated acknowledgment is completed
+| Code    | Name       |
+|---------|------------|
+| 0x00001 | HANDSHAKE  |
+| 0x00002 | DATA       |
+| 0x00003 | KEEP_ALIVE |
+| 0x00004 | ERROR      |
+| 0x00005 | CLOSE      |
 
 ---
 
-## 7. Cryptography
+# 6. Packet Structure
 
-GSP v0.1 is designed for authenticated encryption and ephemeral key exchange.
+All values are **big-endian**.
 
-### 7.1 Key Exchange
+```
++--------+------+-------+---------+-----------+-----------+--------+---------+
+| Ver(1) | Type |Flags  | Length  | SessionID | Sequence  | CRC32  | Payload |
++--------+------+-------+---------+-----------+-----------+--------+---------+
+```
+
+### Notes
+
+- Payload is encrypted after handshake
+- CRC32 is a pre-check only
+- Header MAY be obfuscated in advanced mode
+
+---
+
+# 7. Handshake Protocol
+
+## 7.1 Overview
+
+The handshake establishes:
+
+- Secure session keys
+- Server identity
+- Client authentication
+- Transcript integrity
+
+---
+
+## 7.2 Handshake Flow
+
+```
+Client                          Server
+  |                               |
+  | -------- ClientHello -------->|
+  |                               |
+  | <------- ServerHello -------- |
+  |                               |
+  | -------- ClientProof -------->|
+  |                               |
+  | <------- ServerAccept ------- |
+  |                               |
+```
+
+---
+
+## 7.3 ClientHello
+
+Contains:
+
+- protocol_version
+- client_ephemeral_public_key (X25519)
+- client_random (32 bytes)
+- supported_ciphers
+- capability_flags
+
+---
+
+## 7.4 ServerHello
+
+Contains:
+
+- server_ephemeral_public_key
+- server_random
+- selected_cipher
+- challenge_seed
+- server_identity_proof
+
+### Server Authentication (REQUIRED)
+
+One of:
+
+- public key pinning
+- signature using long-term key
+- GSP trust model
+
+---
+
+## 7.5 Transcript Binding
+
+```
+transcript_hash = HASH(
+  ClientHello ||
+  ServerHello ||
+  challenge_seed
+)
+```
+
+All authentication MUST depend on this value.
+
+---
+
+## 7.6 Key Exchange
+
+```
+shared_secret = X25519(client_private, server_public)
+```
+
+---
+
+## 7.7 Key Derivation
+
+```
+master_key = HKDF(shared_secret, transcript_hash)
+
+client_send_key
+server_send_key
+client_nonce_base
+server_nonce_base
+token_key (optional)
+```
+
+---
+
+## 7.8 ClientProof
+
+```
+HMAC(token_key, transcript_hash || challenge_response)
+```
+
+Includes:
+
+- challenge response
+- optional token
+
+---
+
+## 7.9 ServerAccept
+
+```
+HMAC(server_send_key, transcript_hash)
+```
+
+⚠️ Connection is ONLY valid after this step.
+
+---
+
+# 8. Encryption
 
 Recommended:
 
-- **X25519** for ephemeral key exchange
+- ChaCha20-Poly1305
 
-### 7.2 Authenticated Encryption
+Nonce:
 
-Recommended:
-
-- **ChaCha20-Poly1305**
-
-Alternative constructions may be defined in future revisions.
-
-### 7.3 Key Derivation
-
-A secure key derivation function must derive:
-
-- client-to-server encryption key
-- server-to-client encryption key
-- client nonce base
-- server nonce base
-- optional token/session subkeys
-
-Directional separation is required.
+```
+nonce = base_nonce XOR sequence
+```
 
 ---
 
-## 8. Authentication
+# 9. Authentication
 
-Authentication is mandatory before application data is processed.
+- Mandatory before DATA packets
+- Token-based (optional but recommended)
 
-### 8.1 Token Model
+## Token Properties
 
-GSP may use dynamic short-lived authentication tokens.
-
-Recommended properties:
-
-- short expiration window
-- HMAC-based validation
-- transcript-aware binding where applicable
-- server-side replay protection
-
-### 8.2 Client Validation
-
-Before accepting DATA packets, the server must verify:
-
-- session validity
-- authentication proof validity
-- packet structure correctness
-- sequence and integrity expectations
+- short-lived
+- HMAC-based
+- replay protected
 
 ---
 
-## 9. Encryption and Obfuscation
+# 10. Anti-Replay Protection
 
-GSP aims to minimize metadata exposure.
+- sequence validation REQUIRED
+- unique challenge_seed per session
+- token expiration REQUIRED
 
-### 9.1 Encrypted Content
+---
 
-The payload must be encrypted.
-
-### 9.2 Optional Obfuscation Techniques
-
-Implementations may include:
+# 11. Obfuscation (Optional)
 
 - dynamic padding
-- traffic shaping
-- junk data insertion
-- packet size normalization
-- metadata minimization
+- junk packets
+- size normalization
+- timing jitter
 
-These techniques improve resistance to fingerprinting but do not replace cryptographic security.
+⚠️ Does NOT replace encryption
 
 ---
 
-## 10. Reliability and Transport Behavior
+# 12. Transport Behavior
 
-GSP is intended to support flexible transport behavior.
+Supports:
 
-### 10.1 Core Model
-
-Implementations may define delivery behavior such as:
-
-- low-latency best-effort delivery
-- optional retransmission
 - ordered delivery
-- partially ordered delivery
-
-### 10.2 Sequence Numbers
-
-Sequence fields are used to support tracking, replay detection, and optional reliability logic.
+- unordered delivery
+- retransmission (optional)
 
 ---
 
-## 11. Keep-Alive
+# 13. Keep Alive
 
-KEEP_ALIVE packets may be sent periodically to preserve connection state and detect dead peers.
+Used to:
 
-Implementations should define:
-
-- idle timeout
-- keep-alive interval
-- retry threshold
-- termination policy
+- maintain session
+- detect disconnects
 
 ---
 
-## 12. Errors
+# 14. Error Handling
 
-ERROR packets are used to indicate protocol-level or session-level failures.
-
-Possible error classes include:
+Examples:
 
 - invalid packet
 - authentication failure
 - session expired
-- unsupported version
 - integrity failure
-- protocol violation
-- timeout
-
-The exact error code registry is left for future versions.
 
 ---
 
-## 13. Connection Termination
+# 15. Connection Termination
 
-A session may be terminated by:
+Triggered by:
 
-- explicit CLOSE packet
-- authentication failure
+- CLOSE packet
 - timeout
+- auth failure
 - integrity violation
-- policy enforcement
-
-Implementations should invalidate session keys immediately upon termination.
 
 ---
 
-## 14. Security Considerations
+# 16. Security Requirements
 
-This protocol is experimental and incomplete.
+Implementations MUST:
 
-Important security considerations include:
-
-- server authentication is mandatory
-- transcript binding is mandatory
-- anti-replay design is required
-- key separation is required
-- obfuscation alone does not provide security
-- compression must be carefully constrained before authentication
-- implementation correctness is critical
+- authenticate server
+- bind transcript
+- separate keys per direction
+- validate all packets
+- reject unauthenticated data
 
 ---
 
-## 15. Versioning
+# 17. Hydra Mechanism (Optional)
 
-GSP v0.1 is an experimental draft and should not be considered stable.
+GSP MAY implement a dynamic challenge system:
 
-Future versions may introduce:
+- recursive complexity
+- adaptive difficulty
+- anti-bot / anti-DDoS
 
-- extended message registries
-- stream multiplexing
-- formal error registry
-- standardized transport profiles
-- improved compatibility mode
-- stronger anti-fingerprinting behavior
+This mechanism is intentionally not fully specified.
 
 ---
 
-## 16. Implementation Status
+# 18. Implementation Reference (Pseudo Code)
 
-This specification describes the conceptual and structural model of GSP.  
-It does not require a production implementation to exist before the protocol definition is valid.
+## Client (simplified)
+
+```python
+send(ClientHello)
+
+server_hello = recv()
+
+verify_server_identity(server_hello)
+
+shared_secret = x25519(client_priv, server_hello.pub)
+
+transcript = hash(ClientHello + ServerHello + challenge)
+
+keys = hkdf(shared_secret, transcript)
+
+send(ClientProof)
+
+server_accept = recv()
+
+verify(server_accept)
+
+session_established = True
+```
 
 ---
 
-## 17. License
+## Server (simplified)
 
-This specification may be distributed under the same license as the GSP project repository unless otherwise stated.
+```python
+client_hello = recv()
+
+generate_ephemeral_key()
+
+send(ServerHello)
+
+shared_secret = x25519(server_priv, client_pub)
+
+transcript = hash(...)
+
+keys = hkdf(...)
+
+client_proof = recv()
+
+verify(client_proof)
+
+send(ServerAccept)
+```
 
 ---
 
-## 18. Author Note
+# 19. Legal / Patent Notice
 
-GSP is an evolution of the earlier CGP (Cockatiel G Protocol) concept and represents the continuation of that protocol vision into a broader and more mature architecture.
+Licensed under Apache 2.0.
+
+All contributors grant patent rights.
+
+Any entity initiating patent litigation forfeits rights granted under this license.
+
+---
+
+# 20. Status
+
+Experimental.
+
+Not production-ready.
+
+---
+
+# 21. Author Note
+
+GSP evolves from CGP (Cockatiel G Protocol) and represents a next-generation secure communication architecture.
