@@ -61,7 +61,7 @@ Security is mandatory and built into the protocol:
 
 ## 🚀 Performance
 
-- ⚡ Latency: **2–5 ms**
+- ⚡ Latency: **2–5 ms** (for authenticated local connections)
 - 🌐 Global handshake: **< 50 ms**
 - 📉 Bandwidth usage: up to **20% lower than HTTPS**
 - 🔁 Reduced round trips via multiplexing
