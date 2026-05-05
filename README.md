@@ -1,4 +1,4 @@
-# 🌐 GSP — Globalized Secure Protocol
+ 🌐 GSP — Globalized Secure Protocol
 
 **GSP (Globalized Secure Protocol)** is a next-generation binary communication protocol that merges transport and application layers into a unified architecture. It delivers ultra-low latency, end-to-end encryption, and built-in security, enabling efficient, compact, and resilient data exchange with native P2P support and minimal overhead.
 
@@ -10,7 +10,7 @@
 
 GSP is designed to redefine how systems communicate by eliminating inefficiencies of traditional protocols such as HTTP, TCP, and UDP.
 
-- 🚀 Ultra-low latency (2–5 ms)
+- 🚀 Ultra-low latency
 - 🔐 End-to-end encryption by default
 - 📦 Compact binary packet structure
 - 🌍 Native P2P support
@@ -51,7 +51,7 @@ All packets are:
 Security is mandatory and built into the protocol:
 
 - 🔑 Ephemeral key exchange (X25519)
-- 🔒 Encryption (ChaCha20-Poly1305 or custom variant)
+- 🔒 Encryption (ChaCha20-Poly1305)
 - 🧾 Dynamic tokens (HMAC-SHA256)
 - 🧠 Transcript binding (anti-replay / anti-MITM)
 - 🔄 Continuous key rotation
@@ -61,7 +61,7 @@ Security is mandatory and built into the protocol:
 
 ## 🚀 Performance
 
-- ⚡ Latency: **2–5 ms** (for authenticated local connections)
+- ⚡ Latency: **It depends on the fiber optic infrastructure. ** (for authenticated local connections)
 - 🌐 Global handshake: **< 50 ms**
 - 📉 Bandwidth usage: up to **20% lower than HTTPS**
 - 🔁 Reduced round trips via multiplexing
