@@ -4,9 +4,6 @@ Globalized Secure Protocol (GSP)
 Version 1.0 — Experimental
 "draft-gsp-core-00"»
 
-""Status: Experimental" (https://img.shields.io/badge/status-experimental-orange)" (https://github.com/)
-""Specification" (https://img.shields.io/badge/specification-GSP%2F1.0-blue)" (https://github.com/)
-
 ---
 
 Abstract
