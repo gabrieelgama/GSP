@@ -1,447 +1,770 @@
-Globalized Secure Protocol (GSP)
 
-«GSP Core Protocol Specification
-Version 1.0 — Experimental
-"draft-gsp-core-00"»
 
----
+# Globalized Secure Protocol (GSP)
 
-Abstract
-
-The Globalized Secure Protocol (GSP) is a general-purpose communication protocol designed for secure, low-latency, and bandwidth-efficient communication.
-
-GSP provides a common framework for:
-
-- Secure communication
-- Packet framing
-- Connection management
-- Multiplexed streams
-- Reliable and unreliable delivery
-- Acknowledgements
-- Flow control
-- Congestion control
-- Optional compression
-- Connection migration
-- Protocol extensions
-
-GSP is designed to operate independently of a single underlying transport. Transport-specific profiles may define how GSP operates over UDP, TCP, QUIC, or other compatible transports.
-
-The protocol uses the following URI scheme:
-
-gsp://
+**GSP Core Protocol Specification**  
+**Version:** 1.0  
+**Status:** Experimental  
+![Status](https://img.shields.io/badge/status-experimental-orange)
+![Specification](https://img.shields.io/badge/specification-GSP%2F1.0-blue)
 
 ---
 
-Table of Contents
+## Abstract
 
-- "1. Introduction" (#1-introduction)
-- "2. Conventions and Terminology" (#2-conventions-and-terminology)
-- "3. Protocol Architecture" (#3-protocol-architecture)
-- "4. Connection Model" (#4-connection-model)
-- "5. Packet Format" (#5-packet-format)
-- "6. Connection Establishment" (#6-connection-establishment)
-- "7. Security" (#7-security)
-- "8. Streams" (#8-streams)
-- "9. Reliability" (#9-reliability)
-- "10. Flow Control" (#10-flow-control)
-- "11. Transport Profiles" (#11-transport-profiles)
-- "12. Compression" (#12-compression)
-- "13. Error Handling" (#13-error-handling)
-- "14. Extensions" (#14-extensions)
-- "15. Security Considerations" (#15-security-considerations)
-- "16. Implementation Requirements" (#16-implementation-requirements)
-- "17. IANA Considerations" (#17-iana-considerations)
-- "18. Future Work" (#18-future-work)
+The Globalized Secure Protocol (GSP) is a general-purpose network protocol
+for applications that need secure communication, multiplexed streams, and
+control over how data is delivered.
 
----
+GSP can run over different transports, including UDP, TCP, and QUIC.
 
-1. Introduction
+The main idea is simple: applications should not have to build their own
+packet format, acknowledgement system, encryption layer, stream handling,
+and connection management every time they need something beyond a basic
+TCP connection.
 
-The Globalized Secure Protocol (GSP) is a network protocol designed for applications that require secure communication without unnecessary protocol overhead.
+GSP provides those pieces as part of one protocol.
 
-GSP combines transport-oriented functionality with application-oriented messaging.
+This specification describes the experimental GSP/1.0 protocol.
 
-The protocol is intended for applications such as:
-
-- Real-time communication
-- Multiplayer games
-- APIs
-- RPC systems
-- File transfer
-- Streaming
-- Distributed applications
-- Embedded systems
-- IoT systems
-
-GSP does not attempt to replace every existing networking protocol. Instead, it provides a common protocol layer that applications can use when they need control over security, delivery semantics, streams, and transport behavior.
+> GSP/1.0 is experimental. The wire format and some protocol details may
+> change before the first stable release.
 
 ---
 
-2. Conventions and Terminology
+## 1. Why GSP?
 
-The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, and MAY in this document are to be interpreted as described in RFC 2119 and RFC 8174.
+There are already a lot of networking protocols. GSP is not meant to
+replace all of them.
+
+The problem is what happens when an application needs a combination of
+features that does not fit neatly into one existing protocol.
+
+For example:
+
+- TCP gives you reliable ordered data, but only as a byte stream.
+- UDP gives you datagrams, but leaves reliability and most transport
+  mechanisms to the application.
+- HTTP is great for request/response applications, but is not a general
+  purpose transport for every kind of application.
+- WebSocket provides persistent communication, but is tied to an HTTP
+  handshake model.
+- QUIC already solves many transport problems, but an application may still
+  want its own protocol and message model.
+
+A developer using UDP might end up writing something like this:
+
+```text
+Application
+    |
+    +-- Packet format
+    +-- Packet IDs
+    +-- ACKs
+    +-- Retransmission
+    +-- Replay protection
+    +-- Encryption
+    +-- Streams
+    +-- Flow control
+    +-- Compression
+    |
+    v
+   UDP
+
+GSP tries to provide a common implementation for these pieces.
+
+It does not mean that every application has to use every GSP feature.
+
+
+---
+
+2. Goals
+
+GSP has a few practical goals.
+
+Security
+
+Encrypted and authenticated communication should be the normal case, not something that applications have to bolt on afterwards.
+
+Low overhead
+
+GSP should avoid adding unnecessary bytes, round trips, and processing.
+
+Multiple streams
+
+A single connection should be able to carry multiple independent streams.
+
+Different delivery modes
+
+Not everything needs retransmission.
+
+A file transfer and a player-position update have very different requirements.
+
+GSP therefore supports both reliable and unreliable data.
+
+Transport flexibility
+
+GSP should not be permanently tied to one transport.
+
+Extensibility
+
+New features should be possible without changing the entire protocol.
+
+
+---
+
+3. Terminology
+
+The following terms are used throughout this document.
 
 Endpoint
-
 A device or process participating in a GSP connection.
 
 Client
-
-The endpoint that initiates a connection.
+The endpoint that starts a connection.
 
 Server
+The endpoint accepting a connection.
 
-The endpoint that accepts a connection.
+Peer
+The other endpoint of a connection.
 
 Connection
-
-A logical communication session between two endpoints.
+A logical GSP session between two endpoints.
 
 Stream
-
-An independently identified flow of application data inside a connection.
+A logical data channel inside a connection.
 
 Packet
-
-The basic unit transmitted by GSP.
+A GSP packet sent over the selected transport.
 
 Frame
-
-A logical data structure contained inside a packet.
+A structure carried inside a packet.
 
 Transport
+The protocol carrying GSP packets, such as UDP, TCP, or QUIC.
 
-The underlying protocol carrying GSP packets.
-
----
-
-3. Protocol Architecture
-
-GSP uses a layered architecture.
-
-┌───────────────────────────────────────┐
-│              Application              │
-├───────────────────────────────────────┤
-│          GSP Application Layer        │
-│          Messages / RPC / Data        │
-├───────────────────────────────────────┤
-│             GSP Core Layer            │
-│       Packets / Frames / Streams      │
-├───────────────────────────────────────┤
-│            GSP Security               │
-│       Encryption / Authentication     │
-├───────────────────────────────────────┤
-│           GSP Transport               │
-│ Reliability / ACK / Flow Control      │
-├───────────────────────────────────────┤
-│          Transport Profile            │
-│          UDP / TCP / QUIC             │
-└───────────────────────────────────────┘
-
-The layers are logical. An implementation MAY combine multiple layers internally.
 
 ---
 
-4. Connection Model
+4. Protocol Overview
 
-A GSP connection is a logical session between two endpoints.
+A simplified GSP connection looks like this:
 
-A single connection MAY contain multiple streams.
+Application
+     |
+     v
++------------+
+| GSP Stream |
++------------+
+     |
+     v
++------------+
+| GSP Packet |
++------------+
+     |
+     v
++------------+
+|   Security |
++------------+
+     |
+     v
++------------+
+|  Transport |
++------------+
+     |
+     +---- UDP
+     +---- TCP
+     +---- QUIC
 
-GSP Connection
-│
-├── Stream 0 — Control
-├── Stream 1 — Application
-├── Stream 2 — File Transfer
-├── Stream 3 — Real-Time Data
-└── Stream 4 — RPC
+A connection can contain multiple streams:
 
-Stream failures SHOULD remain isolated from the rest of the connection whenever possible.
+Connection
+|
++-- Stream 0
++-- Stream 1
++-- Stream 2
++-- Stream 3
++-- ...
+
+The exact use of each stream is decided by the application.
+
 
 ---
 
 5. URI Scheme
 
-GSP defines the following URI syntax:
+GSP uses the gsp:// URI scheme.
+
+Basic form:
 
 gsp://host[:port][/path][?query]
 
 Examples:
 
 gsp://example.com
-gsp://example.com:443
-gsp://example.com/api
-gsp://192.0.2.10:9000/game
+gsp://example.com:9000
+gsp://example.com/game
+gsp://192.0.2.10:9000/api
 
-The URI identifies a GSP service.
+The URI identifies the GSP service.
 
-The actual underlying transport is selected by the implementation and the applicable transport profile.
+It does not by itself select the underlying transport.
 
----
-
-6. Packet Format
-
-A GSP packet consists of a header followed by one or more frames.
-
-Conceptually:
-
-+-------------------------+
-| GSP Header              |
-+-------------------------+
-| Extension Fields        |
-+-------------------------+
-| Frame(s)                |
-+-------------------------+
-| Authentication Tag      |
-+-------------------------+
-
-The exact binary representation is defined by the wire-format specification.
 
 ---
 
-7. Packet Header
+6. Connection Lifecycle
 
-The GSP header contains the following logical fields:
+A normal connection goes through these states:
 
-Field| Description
-Version| GSP protocol version
-Flags| Packet-level flags
-Type| Packet type
-Connection ID| Identifies the connection
-Packet Number| Identifies the packet
-Payload Length| Payload size
-Extensions| Optional features
+IDLE
+ |
+ v
+CONNECTING
+ |
+ v
+HANDSHAKING
+ |
+ v
+ESTABLISHED
+ |
+ +-------> CLOSING
+ |            |
+ |            v
+ +--------> CLOSED
+ |
+ +-------> ERROR
 
-Multi-byte integers MUST use network byte order unless otherwise specified.
+A minimal implementation can represent this as:
+
+from enum import Enum
+
+
+class ConnectionState(Enum):
+    IDLE = 0
+    CONNECTING = 1
+    HANDSHAKING = 2
+    ESTABLISHED = 3
+    CLOSING = 4
+    CLOSED = 5
+    ERROR = 6
+
 
 ---
 
-8. Packet Types
+7. Handshake
 
-GSP/1.0 defines the following packet types:
-
-Type| Name| Purpose
-"0x01"| "HELLO"| Start connection negotiation
-"0x02"| "HELLO_ACK"| Accept connection negotiation
-"0x03"| "KEY_EXCHANGE"| Establish session keys
-"0x04"| "DATA"| Carry connection data
-"0x05"| "STREAM_DATA"| Carry stream data
-"0x06"| "ACK"| Acknowledge packets
-"0x07"| "PING"| Test connectivity
-"0x08"| "PONG"| Respond to "PING"
-"0x09"| "CLOSE"| Gracefully close connection
-"0x0A"| "RESET"| Immediately terminate connection
-"0x0B"| "ERROR"| Report protocol errors
-
-Unassigned packet types are reserved.
-
----
-
-9. Connection Establishment
-
-A typical GSP handshake is:
+The initial handshake is intentionally small.
 
 Client                         Server
-  │                              │
-  │ -------- HELLO ------------> │
-  │                              │
-  │ <------- HELLO_ACK --------- │
-  │                              │
-  │ ----- KEY_EXCHANGE --------> │
-  │ <---- KEY_EXCHANGE --------- │
-  │                              │
-  │ ===== Secure Session ======= │
+  |                              |
+  | -------- HELLO ------------> |
+  |                              |
+  | <------- HELLO_ACK --------- |
+  |                              |
+  | ----- KEY_EXCHANGE --------> |
+  |                              |
+  | <---- KEY_EXCHANGE --------- |
+  |                              |
+  |       Secure session         |
 
-The handshake negotiates:
+HELLO is used to advertise supported protocol features.
 
-- GSP version
-- Cryptographic capabilities
-- Compression
-- Transport capabilities
-- Protocol extensions
-- Connection parameters
+Depending on the implementation, it can contain:
 
-Application data MUST NOT be treated as authenticated GSP application data before the required security handshake has completed.
+GSP version
+
+Supported cipher suites
+
+Compression algorithms
+
+Extensions
+
+Maximum packet size
+
+Stream limits
+
+
+Example application representation:
+
+hello = {
+    "version": 1,
+    "ciphers": [
+        "CHACHA20-POLY1305"
+    ],
+    "compression": [
+        "none",
+        "lz4"
+    ],
+    "extensions": []
+}
+
+This dictionary is only an implementation example. It is not the wire encoding.
+
 
 ---
 
-10. Security
+8. Packet Format
 
-Security is a core requirement of GSP.
+The initial experimental packet header is 18 bytes.
 
-Normal application data MUST use authenticated encryption.
+0                   1                   2                   3
++-------------------+-------------------+-------------------+
+| Version |  Type   |        Connection ID (high)          |
++-------------------+-------------------+-------------------+
+|              Connection ID (low)                        |
++-------------------+-------------------+-------------------+
+|                 Packet Number                         |
++-------------------+-------------------+-------------------+
+|                Payload Length                        |
++-------------------+-------------------+-------------------+
+|                       Payload ...                     |
++---------------------------------------------------------+
+
+For the experimental format, the fields are:
+
+Field	Size
+
+Version	1 byte
+Type	1 byte
+Connection ID	8 bytes
+Packet Number	4 bytes
+Payload Length	4 bytes
+Payload	Variable
+
+
+Multi-byte integers use network byte order (big-endian).
+
+
+---
+
+9. Packet Types
+
+The current packet type values are:
+
+Value	Name	Purpose
+
+0x01	HELLO	Start negotiation
+0x02	HELLO_ACK	Accept negotiation
+0x03	KEY_EXCHANGE	Key exchange
+0x04	DATA	General data
+0x05	STREAM_DATA	Stream data
+0x06	ACK	Acknowledgement
+0x07	PING	Keepalive
+0x08	PONG	Keepalive response
+0x09	CLOSE	Graceful close
+0x0A	RESET	Immediate close
+0x0B	ERROR	Protocol error
+
+
+Packet types not understood by an implementation MUST NOT cause a crash.
+
+
+---
+
+10. Minimal Packet Encoder
+
+The following is enough to start experimenting with the packet format.
+
+import struct
+
+
+GSP_VERSION = 1
+HEADER_FORMAT = "!BBQII"
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+
+
+def encode_packet(packet_type, connection_id, packet_number, payload):
+    header = struct.pack(
+        HEADER_FORMAT,
+        GSP_VERSION,
+        packet_type,
+        connection_id,
+        packet_number,
+        len(payload),
+    )
+
+    return header + payload
+
+Decoder:
+
+def decode_packet(data):
+    if len(data) < HEADER_SIZE:
+        raise ValueError("packet too short")
+
+    (
+        version,
+        packet_type,
+        connection_id,
+        packet_number,
+        payload_length,
+    ) = struct.unpack(
+        HEADER_FORMAT,
+        data[:HEADER_SIZE],
+    )
+
+    if version != GSP_VERSION:
+        raise ValueError("unsupported GSP version")
+
+    if len(data) != HEADER_SIZE + payload_length:
+        raise ValueError("invalid payload length")
+
+    return {
+        "version": version,
+        "type": packet_type,
+        "connection_id": connection_id,
+        "packet_number": packet_number,
+        "payload": data[HEADER_SIZE:],
+    }
+
+Example:
+
+packet = encode_packet(
+    packet_type=0x04,
+    connection_id=12345,
+    packet_number=0,
+    payload=b"hello",
+)
+
+print(decode_packet(packet))
+
+
+---
+
+11. Connection IDs
+
+Every connection has a Connection ID.
+
+The ID is an opaque 64-bit value in the current experimental format.
+
+Example:
+
+import secrets
+
+connection_id = secrets.randbits(64)
+
+A Connection ID is not an authentication mechanism.
+
+Implementations should generate IDs that are difficult to predict.
+
+
+---
+
+12. Packet Numbers
+
+Packets have monotonically increasing packet numbers.
+
+class PacketCounter:
+    def __init__(self):
+        self.value = 0
+
+    def next(self):
+        number = self.value
+        self.value += 1
+        return number
+
+Packet numbers are useful for:
+
+ACKs
+
+Loss detection
+
+Replay protection
+
+Cryptographic nonce construction
+
+
+A packet number MUST NOT be reused with the same cryptographic context.
+
+
+---
+
+13. Security
+
+GSP uses authenticated encryption for protected application data.
 
 The initial recommended cipher suite is:
 
 ChaCha20-Poly1305
 
-Implementations MUST NOT reuse an AEAD nonce with the same encryption key.
+A production implementation must also define:
 
-Implementations SHOULD use ephemeral key exchange mechanisms that provide forward secrecy.
+Key exchange
 
----
+Key derivation
 
-11. Session Keys
+Nonce construction
 
-Each GSP connection SHOULD use connection-specific cryptographic keys.
+Key rotation
 
-Long-lived connections MAY perform key updates.
+Authentication
 
-A static symmetric key MUST NOT be reused indefinitely for unrelated connections.
+Replay protection
 
----
 
-12. Replay Protection
+The protocol should never rely on the Connection ID as proof of identity.
 
-GSP uses packet numbers and connection-specific cryptographic state to detect replayed packets.
+Example using Python's cryptography package:
 
-An implementation MUST reject packets that violate the applicable replay policy.
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
----
 
-13. Packet Padding
+key = ChaCha20Poly1305.generate_key()
+cipher = ChaCha20Poly1305(key)
 
-GSP MAY use dynamic packet padding.
+nonce = packet_number.to_bytes(12, "big")
 
-Padding can make packet sizes less predictable.
+encrypted = cipher.encrypt(
+    nonce,
+    plaintext,
+    associated_data,
+)
 
-Example:
+decrypted = cipher.decrypt(
+    nonce,
+    encrypted,
+    associated_data,
+)
 
-Payload: 143 bytes
-Padded:  160 bytes
+The example is deliberately small. It does not define the complete GSP key schedule.
 
-Padding does not replace encryption and MUST NOT be considered a complete traffic-analysis defense.
-
----
-
-14. Streams
-
-GSP supports multiplexed streams.
-
-Each stream has a unique Stream ID within its connection.
-
-Connection #42
-│
-├── Stream 0
-├── Stream 1
-├── Stream 2
-├── Stream 3
-└── Stream 4
-
-Applications MAY assign different purposes to different streams.
 
 ---
 
-15. Reliable Delivery
+14. Replay Protection
 
-A reliable stream provides:
+A receiver must not blindly process the same authenticated packet twice.
 
-- Delivery confirmation
-- Retransmission
-- Optional ordered delivery
+A simple prototype can use:
 
-Reliable delivery is suitable for:
+class ReplayWindow:
+    def __init__(self):
+        self.seen = set()
 
-- File transfers
-- API requests
-- RPC
-- Authentication
-- Configuration
-- Important application events
+    def accept(self, packet_number):
+        if packet_number in self.seen:
+            return False
 
----
+        self.seen.add(packet_number)
+        return True
 
-16. Unreliable Delivery
+A real implementation should use a bounded sliding window.
 
-GSP MAY provide unreliable messages.
-
-Unreliable messages do not require retransmission.
-
-This mode is useful for rapidly changing information such as:
-
-- Player positions
-- Telemetry
-- Voice packets
-- Sensor updates
-- Temporary state
-
-An implementation MUST preserve the reliability semantics selected by the application.
 
 ---
 
-17. Ordering
+15. Streams
 
-A stream MAY be ordered or unordered.
+Streams allow multiple logical data flows to share one connection.
 
-Ordered stream:
+GSP Connection
+|
++-- Stream 0
+|    |
+|    +-- data
+|
++-- Stream 1
+|    |
+|    +-- data
+|
++-- Stream 2
+     |
+     +-- data
 
-1 → 2 → 3 → 4
+A minimal stream object:
 
-Unordered stream:
+class Stream:
+    def __init__(self, stream_id):
+        self.id = stream_id
+        self.sequence = 0
 
-1
-3
-2
-4
+    def next_sequence(self):
+        value = self.sequence
+        self.sequence += 1
+        return value
 
-Applications SHOULD use unordered delivery when old messages become useless after newer messages arrive.
 
 ---
 
-18. Acknowledgements
+16. Reliable Data
 
-Reliable packets are acknowledged using "ACK".
+Reliable streams keep track of data that has not been acknowledged.
 
-An ACK MAY acknowledge multiple packet ranges.
+class ReliableStream(Stream):
+    def __init__(self, stream_id):
+        super().__init__(stream_id)
+        self.pending = {}
 
-Example:
+    def send(self, data):
+        sequence = self.next_sequence()
+        self.pending[sequence] = data
+        return sequence
 
-ACK
+    def acknowledge(self, sequence):
+        self.pending.pop(sequence, None)
 
-100-105
-108
-110-112
+This is only the basic mechanism.
 
-This reduces acknowledgement overhead.
+A real implementation also needs:
+
+Timers
+
+Retransmission
+
+Duplicate detection
+
+Ordering
+
+Loss detection
+
+
+
+---
+
+17. Unreliable Data
+
+Some data is not worth retransmitting.
+
+Consider a game sending:
+
+Player position:
+X=100
+X=101
+X=102
+X=103
+
+If the X=101 packet is lost, sending it again after X=103 usually does not help.
+
+GSP therefore allows an application to use unreliable delivery where appropriate.
+
+Typical examples:
+
+Player positions
+
+Sensor readings
+
+Telemetry
+
+Temporary state
+
+Real-time updates
+
+
+Reliable delivery is better for things such as:
+
+File transfers
+
+Authentication
+
+RPC
+
+Configuration
+
+Important events
+
+
+
+---
+
+18. ACKs
+
+Reliable packets are acknowledged using ACK.
+
+A simple ACK could contain:
+
+100
+101
+102
+105
+
+A more efficient representation uses ranges:
+
+100-102
+105
+
+The exact binary ACK representation is part of the experimental wire format and may change.
+
+Minimal implementation:
+
+class Ack:
+    def __init__(self, packets):
+        self.packets = packets
+
 
 ---
 
 19. Loss Detection
 
-GSP implementations SHOULD use packet acknowledgements and timing information to detect loss.
+For transports such as UDP, GSP needs a way to detect lost packets.
 
-Implementations SHOULD account for packet reordering before declaring a packet lost.
+A basic prototype can start with a timeout:
 
-A packet SHOULD NOT be retransmitted solely because a later packet arrived first.
+import time
+
+
+class PendingPacket:
+    def __init__(self, data):
+        self.data = data
+        self.sent_at = time.monotonic()
+
+
+def is_lost(packet, timeout=0.5):
+    return (
+        time.monotonic() - packet.sent_at
+        > timeout
+    )
+
+Production implementations should use a proper RTT estimator instead of a fixed timeout.
+
+Packet reordering must also be taken into account.
+
 
 ---
 
 20. Flow Control
 
-GSP supports both connection-level and stream-level flow control.
+Flow control prevents a sender from overwhelming a receiver.
 
-Example:
+There are two levels:
 
-Connection Window: 16 MiB
+Connection
+|
++-- Connection limit
+|
++-- Stream 0 limit
++-- Stream 1 limit
++-- Stream 2 limit
 
-Stream 1: 4 MiB
-Stream 2: 8 MiB
-Stream 3: 4 MiB
+Example limits:
 
-A sender MUST NOT exceed the currently advertised flow-control limit.
+MAX_CONNECTION_DATA = 16 * 1024 * 1024
+MAX_STREAM_DATA = 4 * 1024 * 1024
+
+A sender must respect the limits advertised by its peer.
+
 
 ---
 
 21. Congestion Control
 
-When GSP is responsible for packet transmission over a congestion-sensitive network, congestion control MUST be implemented.
+Flow control and congestion control are not the same thing.
 
-Transport profiles MAY delegate congestion control to the underlying transport.
+Flow control asks:
 
-Flow control and congestion control serve different purposes:
+> "Can the receiver handle this?"
 
-Flow Control      → protects the receiver
-Congestion Control → protects the network
+
+
+Congestion control asks:
+
+> "Can the network handle this?"
+
+
+
+For GSP over TCP or QUIC, the transport already handles congestion control.
+
+For direct UDP operation, GSP needs its own congestion-control mechanism.
+
 
 ---
 
@@ -449,386 +772,599 @@ Congestion Control → protects the network
 
 GSP supports optional compression.
 
-The initial recommended compression algorithm is:
+The initial recommended algorithm is:
 
 LZ4
 
-The processing order MUST be:
+The order is:
 
-Application Data
-      ↓
+Application data
+       |
+       v
 Compression
-      ↓
+       |
+       v
 Encryption
-      ↓
-Transmission
+       |
+       v
+Packet
 
-Encrypted data MUST NOT be compressed.
+Do not compress encrypted data.
 
-Applications MAY disable compression for already-compressed data.
+Example:
+
+import lz4.frame
+
+compressed = lz4.frame.compress(data)
+data = lz4.frame.decompress(compressed)
+
+Implementations must put a reasonable limit on decompressed data.
+
 
 ---
 
-23. Connection Migration
+23. Keepalive
 
-A GSP connection MAY migrate between network paths.
+GSP provides PING and PONG.
+
+Client                    Server
+  |                         |
+  | -------- PING --------> |
+  |                         |
+  | <------- PONG --------- |
+
+Minimal handler:
+
+PING = 0x07
+PONG = 0x08
+
+
+def handle_packet(packet):
+    if packet["type"] == PING:
+        return PONG
+
+Keepalive should not be sent more frequently than necessary.
+
+
+---
+
+24. Connection Migration
+
+A GSP connection may move between network paths.
 
 For example:
 
 Wi-Fi
-  ↓
-GSP Connection
-  ↓
-Mobile Network
+  |
+  |  GSP connection
+  |
+  +----------------+
+                   |
+              Mobile network
 
-Migration MUST be authenticated to prevent connection hijacking.
+This is especially useful on devices that switch between Wi-Fi and cellular networks.
 
----
+Migration must be authenticated.
 
-24. Keepalive
+The connection ID alone must not be treated as proof that a new network path belongs to the original peer.
 
-GSP defines:
-
-PING
-PONG
-
-A peer MAY send "PING".
-
-The receiving peer SHOULD respond with "PONG".
-
-Applications SHOULD avoid unnecessary keepalive traffic.
 
 ---
 
-25. Connection Termination
+25. Closing a Connection
 
-A graceful shutdown uses:
+Normal shutdown:
 
 CLOSE
 
-An immediate shutdown uses:
+Immediate shutdown:
 
 RESET
 
-After a connection reaches the "CLOSED" state, application data MUST NOT be accepted for that connection.
+Example:
+
+CLOSE = 0x09
+RESET = 0x0A
+
+
+connection.send(
+    packet_type=CLOSE,
+    payload=b"normal shutdown",
+)
+
+After a connection reaches CLOSED, no new application data should be accepted on that connection.
+
 
 ---
 
 26. Error Codes
 
-Initial GSP error codes are:
+Current error codes:
 
-Code| Name
-"0x0001"| "PROTOCOL_ERROR"
-"0x0002"| "INVALID_PACKET"
-"0x0003"| "AUTHENTICATION_FAILED"
-"0x0004"| "UNSUPPORTED_VERSION"
-"0x0005"| "UNSUPPORTED_EXTENSION"
-"0x0006"| "CONNECTION_TIMEOUT"
-"0x0007"| "STREAM_ERROR"
-"0x0008"| "FLOW_CONTROL_ERROR"
-"0x0009"| "CRYPTO_ERROR"
-"0x000A"| "DECOMPRESSION_ERROR"
-"0x000B"| "PROTOCOL_VIOLATION"
-"0x000C"| "RESOURCE_LIMIT"
+Code	Name
 
-Unknown error codes MUST be handled safely.
+0x0001	PROTOCOL_ERROR
+0x0002	INVALID_PACKET
+0x0003	AUTHENTICATION_FAILED
+0x0004	UNSUPPORTED_VERSION
+0x0005	UNSUPPORTED_EXTENSION
+0x0006	CONNECTION_TIMEOUT
+0x0007	STREAM_ERROR
+0x0008	FLOW_CONTROL_ERROR
+0x0009	CRYPTO_ERROR
+0x000A	DECOMPRESSION_ERROR
+0x000B	PROTOCOL_VIOLATION
+0x000C	RESOURCE_LIMIT
+
+
+Malformed input must never be allowed to crash the server.
+
 
 ---
 
 27. Transport Profiles
 
-GSP is transport-independent.
+GSP can be carried by different transports.
 
-The initial transport profiles are:
+Current profiles:
 
-- GSP/UDP
-- GSP/TCP
-- GSP/QUIC
+GSP/UDP
+GSP/TCP
+GSP/QUIC
 
-Each profile defines how GSP maps onto the underlying transport.
+UDP
 
-                 GSP
-                  │
-       ┌──────────┼──────────┐
-       │          │          │
-      UDP        TCP        QUIC
+Gives GSP the most control.
 
----
+The GSP implementation may need to handle:
 
-28. GSP over UDP
+ACKs
 
-When operating directly over UDP, GSP is responsible for the transport features required by its selected delivery mode.
+Retransmission
 
-This can include:
+Loss detection
 
-- Reliability
-- Retransmission
-- Packet numbering
-- Loss detection
-- Flow control
-- Congestion control
+Congestion control
 
----
+Flow control
 
-29. GSP over TCP
 
-When operating over TCP, TCP provides:
+TCP
 
-- Reliable delivery
-- Ordering
-- Retransmission
-- Congestion control
+TCP already handles:
 
-GSP MUST NOT unnecessarily duplicate TCP's transport functionality.
+Reliability
 
-GSP framing remains necessary to separate application messages.
+Ordering
 
----
+Retransmission
 
-30. GSP over QUIC
+Congestion control
 
-When operating over QUIC, GSP SHOULD reuse functionality already provided by QUIC where appropriate.
 
-A GSP/QUIC implementation MUST avoid creating conflicting or redundant transport mechanisms.
+GSP therefore should not duplicate those mechanisms unnecessarily.
 
----
+TCP is still a byte stream, so GSP framing is required.
 
-31. Application Payloads
+QUIC
 
-GSP does not define a mandatory application serialization format.
+QUIC already provides:
 
-Applications MAY use:
+Encryption
 
-- JSON
-- CBOR
-- MessagePack
-- Protocol Buffers
-- Custom binary formats
+Streams
 
-The application protocol is responsible for interpreting the payload.
+Reliability
+
+Congestion control
+
+Connection migration
+
+
+GSP/QUIC should reuse these features where possible.
+
 
 ---
 
-32. Extensions
+28. Why Not Just Use QUIC?
 
-GSP supports protocol extensions.
+QUIC is one of the transports GSP can use.
 
-An extension MAY define:
+GSP is aimed at a different layer of the problem.
 
-- New packet types
-- New frames
-- New cryptographic suites
-- New compression methods
-- Authentication mechanisms
-- Transport features
-- Application features
+Application
+     |
+     v
+    GSP
+     |
+     v
+   QUIC
+     |
+     v
+    UDP
 
-Extensions MUST have unique identifiers.
+An application can use GSP over QUIC without giving up QUIC's transport features.
 
-Unknown optional extensions MAY be ignored.
+For applications that want direct control over UDP, the GSP/UDP profile can provide a different implementation path.
 
-Unknown mandatory extensions MUST cause the corresponding feature or connection to be rejected.
-
----
-
-33. Security Considerations
-
-Implementations MUST:
-
-1. Validate packet lengths before parsing.
-2. Validate extension lengths.
-3. Authenticate encrypted data before exposing plaintext.
-4. Prevent AEAD nonce reuse.
-5. Implement replay protection.
-6. Limit memory consumption.
-7. Limit decompression resources.
-8. Reject malformed packets safely.
-9. Validate all externally supplied identifiers.
-10. Avoid trusting unauthenticated application data.
-
-Network-facing servers SHOULD additionally implement rate limiting and connection limits.
 
 ---
 
-34. Denial-of-Service Protection
+29. Extensions
 
-GSP implementations SHOULD assume that all network input is potentially malicious.
+GSP has an extension mechanism for features that do not belong in the core.
 
-Servers SHOULD limit:
+Example:
 
-- Handshake rate
-- Number of simultaneous connections
-- Number of streams
-- Maximum packet size
-- Incomplete message memory
-- Decompression resources
-- Authentication attempts
+EXT_LZ4 = 0x0001
+EXT_MIGRATION = 0x0002
 
-An implementation SHOULD reject malformed packets as early as possible.
+Possible extensions include:
 
----
+New compression algorithms
 
-35. Implementation Requirements
+Authentication methods
 
-A minimal GSP/1.0 implementation MUST support:
+New packet types
 
-- Packet parsing
-- Version negotiation
-- Connection establishment
-- Authenticated encryption
-- Packet numbering
-- Basic data transfer
-- ACK processing
-- Connection termination
-- Error handling
+Transport features
 
-The following features MAY be implemented separately:
+Application features
 
-- LZ4 compression
-- Multiplexed streams
-- Unreliable delivery
-- Connection migration
-- RPC
-- HTTP translation
-- Additional transport profiles
+
+Extensions should be documented before being used in interoperable implementations.
+
 
 ---
 
-36. Conformance
+30. Resource Limits
 
-An implementation claiming support for GSP/1.0 SHOULD document:
+Network input is untrusted.
 
-GSP Version:
-Transport Profiles:
-Packet Types:
-Cryptographic Suites:
-Compression:
-Stream Modes:
-Extensions:
-Maximum Packet Size:
+A GSP implementation should always have limits.
 
-Implementations MUST NOT claim support for features that they do not actually implement.
+Example:
 
----
+MAX_PACKET_SIZE = 64 * 1024
+MAX_STREAMS = 1024
+MAX_CONNECTIONS = 10_000
+MAX_DECOMPRESSED_SIZE = 16 * 1024 * 1024
 
-37. IANA Considerations
+These are example values, not mandatory values for every implementation.
 
-This specification currently requires no IANA actions.
+Do not allocate unlimited memory based on values received from the network.
 
-If GSP is submitted to a standards organization in the future, registries SHOULD be created for:
-
-- Packet types
-- Error codes
-- Extension identifiers
-- Cryptographic suites
-- Compression algorithms
-- Transport profiles
 
 ---
 
-38. Performance Targets
+31. Minimal UDP Server
 
-GSP was designed around the following engineering targets:
+The following is a small example of a GSP server.
 
-Metric| Target
-Additional latency| 2–5 ms
-Protocol overhead| 5–10%
-Bandwidth overhead| 5–10%
+It is intended for testing the protocol, not for production use.
 
-These values are targets, not guarantees.
+import socket
+import struct
 
-Actual performance depends on the network, hardware, operating system, transport, packet size, implementation, congestion, encryption, and compression.
 
----
+VERSION = 1
 
-39. Example
+HELLO = 0x01
+HELLO_ACK = 0x02
 
-A GSP application may expose:
+HEADER = "!BBQII"
+HEADER_SIZE = struct.calcsize(HEADER)
 
-gsp://api.example.com/v1
 
-After establishing a secure connection, it may create multiple streams:
+def encode(packet_type, connection_id, number, payload):
+    return struct.pack(
+        HEADER,
+        VERSION,
+        packet_type,
+        connection_id,
+        number,
+        len(payload),
+    ) + payload
 
-Stream 0 → Control
-Stream 1 → Authentication
-Stream 2 → API
-Stream 3 → Notifications
-Stream 4 → File Transfer
 
-All streams can share the same GSP connection and security context.
+def decode(data):
+    if len(data) < HEADER_SIZE:
+        raise ValueError("packet too short")
 
----
+    version, packet_type, connection_id, number, length = (
+        struct.unpack(
+            HEADER,
+            data[:HEADER_SIZE],
+        )
+    )
 
-40. Reference Connection Flow
+    if version != VERSION:
+        raise ValueError("unsupported version")
 
-Client                                  Server
-  │                                       │
-  │               HELLO                   │
-  ├──────────────────────────────────────>│
-  │                                       │
-  │             HELLO_ACK                 │
-  │<──────────────────────────────────────┤
-  │                                       │
-  │           KEY_EXCHANGE                │
-  ├──────────────────────────────────────>│
-  │                                       │
-  │           KEY_EXCHANGE                │
-  │<──────────────────────────────────────┤
-  │                                       │
-  │        Secure GSP Connection          │
-  │=======================================│
-  │                                       │
-  │           STREAM_DATA                 │
-  ├──────────────────────────────────────>│
-  │                                       │
-  │              ACK                      │
-  │<──────────────────────────────────────┤
-  │                                       │
-  │              CLOSE                    │
-  ├──────────────────────────────────────>│
-  │                                       │
+    if len(data) != HEADER_SIZE + length:
+        raise ValueError("invalid packet length")
 
----
+    return {
+        "type": packet_type,
+        "connection_id": connection_id,
+        "number": number,
+        "payload": data[HEADER_SIZE:],
+    }
 
-41. Future Work
 
-Future revisions of the GSP specification may define:
+server = socket.socket(
+    socket.AF_INET,
+    socket.SOCK_DGRAM,
+)
 
-- A complete binary wire format
-- Standardized key exchange
-- 0-RTT connection establishment
-- Session resumption
-- NAT traversal
-- Standardized connection migration
-- Priority scheduling
-- Traffic shaping
-- Additional cryptographic suites
-- Additional transport profiles
-- Formal extension registries
-- Interoperability test vectors
-- Reference implementations
+server.bind(
+    ("0.0.0.0", 9000)
+)
 
-Features listed in this section are not part of GSP/1.0 unless explicitly defined elsewhere.
+print("GSP listening on UDP/9000")
 
----
 
-42. Status
+while True:
+    data, address = server.recvfrom(65535)
 
-This specification is currently Experimental.
+    try:
+        packet = decode(data)
+    except ValueError:
+        continue
 
-The protocol is expected to evolve as implementations are developed and interoperability testing is performed.
+    if packet["type"] == HELLO:
+        response = encode(
+            HELLO_ACK,
+            packet["connection_id"],
+            0,
+            b"GSP/1.0",
+        )
 
-Breaking changes may occur before a stable specification is released.
+        server.sendto(
+            response,
+            address,
+        )
+
 
 ---
 
-License
+32. Minimal UDP Client
 
-Unless otherwise stated, the GSP specification is released under the license included in the root of this repository.
+import socket
+import secrets
+import struct
+
+
+VERSION = 1
+HELLO = 0x01
+
+HEADER = "!BBQII"
+
+
+def encode(packet_type, connection_id, number, payload):
+    return struct.pack(
+        HEADER,
+        VERSION,
+        packet_type,
+        connection_id,
+        number,
+        len(payload),
+    ) + payload
+
+
+sock = socket.socket(
+    socket.AF_INET,
+    socket.SOCK_DGRAM,
+)
+
+connection_id = secrets.randbits(64)
+
+packet = encode(
+    HELLO,
+    connection_id,
+    0,
+    b"GSP/1.0",
+)
+
+sock.sendto(
+    packet,
+    ("127.0.0.1", 9000),
+)
+
+data, address = sock.recvfrom(65535)
+
+print("Server response:", data)
+
 
 ---
 
-Globalized Secure Protocol (GSP)
-"gsp://"
+33. Security Checklist
+
+A production GSP implementation must:
+
+Validate packet lengths.
+
+Validate packet types.
+
+Validate protocol versions.
+
+Validate stream IDs.
+
+Authenticate encrypted data.
+
+Prevent nonce reuse.
+
+Detect replayed packets.
+
+Limit memory usage.
+
+Limit decompression output.
+
+Handle malformed packets safely.
+
+Avoid trusting unauthenticated data.
+
+Protect connection establishment against abuse.
+
+Apply appropriate rate limits.
+
+
+The examples in this document are intentionally incomplete.
+
+They demonstrate the protocol structure, not a finished secure networking library.
+
+
+---
+
+34. Performance Targets
+
+The original GSP design targets are:
+
+Metric	Target
+
+Additional latency	2–5 ms
+Protocol overhead	5–10%
+Bandwidth overhead	5–10%
+
+
+These are targets, not guarantees.
+
+Actual results depend heavily on the transport, network, hardware, implementation, packet size, encryption, compression, and workload.
+
+Benchmarks should be published together with the environment in which they were measured.
+
+
+---
+
+35. Compatibility
+
+An implementation should identify the exact GSP version it supports.
+
+Example:
+
+GSP/1.0
+Transport: UDP
+Encryption: ChaCha20-Poly1305
+Compression: LZ4
+Streams: Supported
+Migration: Supported
+
+Experimental versions should not assume wire compatibility with future versions.
+
+
+---
+
+36. Repository Layout
+
+A reference implementation can be organized like this:
+
+gsp/
+├── README.md
+├── SPEC.md
+├── LICENSE
+├── SECURITY.md
+├── CONTRIBUTING.md
+│
+├── gsp/
+│   ├── __init__.py
+│   ├── packet.py
+│   ├── connection.py
+│   ├── stream.py
+│   ├── crypto.py
+│   ├── ack.py
+│   ├── compression.py
+│   │
+│   └── transport/
+│       ├── udp.py
+│       ├── tcp.py
+│       └── quic.py
+│
+├── examples/
+│   ├── client.py
+│   └── server.py
+│
+└── tests/
+    ├── test_packet.py
+    ├── test_crypto.py
+    ├── test_stream.py
+    └── test_transport.py
+
+
+---
+
+37. Future Work
+
+The following areas are still being worked on:
+
+Final binary wire format
+
+Complete handshake format
+
+Key derivation
+
+Key rotation
+
+UDP congestion control
+
+Complete ACK range encoding
+
+Connection migration details
+
+Session resumption
+
+0-RTT
+
+NAT traversal
+
+Interoperability tests
+
+Reference implementation
+
+Extension registry
+
+
+Nothing in this section should be considered implemented unless it is defined elsewhere in the specification.
+
+
+---
+
+38. Experimental Status
+
+GSP/1.0 is experimental.
+
+The project is expected to change while implementations are being built and tested.
+
+In particular, the following parts are not considered frozen:
+
+Packet format
+
+Handshake
+
+Cryptographic key schedule
+
+ACK encoding
+
+Stream format
+
+Extension identifiers
+
+UDP transport behavior
+
+
+Implementations should therefore expect breaking changes.
+
+
+---
+
+39. License
+
+See LICENSE for licensing information.
+
+
+---
+
+Globalized Secure Protocol
+
 GSP/1.0 — Experimental
+
+gsp://
