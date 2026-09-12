@@ -737,3 +737,5 @@ Terminal GUI
    └── Integrated GPU or Dedicated GPU REQUIRED
 
 This separation allows GSP to remain lightweight, scriptable, portable, and usable across servers, desktops, Android devices, containers, and highly constrained environments while still providing a full graphical experience when appropriate hardware is available.
+
+obs. Why GPU is required: The Terminal GUI is not merely a styled status display — it is a runtime capable of hosting interactive applications alongside the GSP session, which requires GPU-accelerated composition
