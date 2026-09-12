@@ -1,14 +1,14 @@
 # GSP Handshake Protocol Specification
 
 **Globalized Secure Protocol (GSP)**
-**Handshake Protocol Specification — Version 1.1**
-**Codename:** FOAREVAMP (first of all revamp)
+**Handshake Protocol Specification**
+**Version:** Handshake 1.1 (FOAREVAMP) — FIRST OF ALL REVAMP
 **Status:** Experimental / Draft
 **URI Scheme:** `gsp://`
 
 ---
 
-## 1. Abstract
+# 1. Abstract
 
 The GSP Handshake establishes a cryptographically protected GSP session between two peers.
 
@@ -18,340 +18,672 @@ The handshake provides:
 * Capability negotiation
 * Cryptographic suite negotiation
 * Key exchange
+* Session key derivation
 * Peer authentication
-* Session establishment
-* Forward secrecy
+* Responder authentication
+* Initiator authentication
+* Transcript integrity
+* Downgrade protection
 * Replay protection
-* Transcript binding
+* Forward secrecy
+* Key confirmation
+* Session identification
+* Optional compression negotiation
 * Optional session resumption
-* Optional 0-RTT data
-* Handshake Context Cache (HCC)
+* Optional Handshake Context Cache (HCC)
+* Optional key updates
 
-GSP 1.1 introduces the **Handshake Context Cache (HCC)**.
+GSP 1.1 uses an optimized handshake design in which the Initiator includes its ephemeral key exchange public key in the initial `HELLO` message and the Responder returns its ephemeral public key in `HELLO_ACK`.
 
-HCC allows previously negotiated handshake information to be referenced instead of retransmitted on every connection.
+This eliminates the separate `KEY_EXCHANGE` round trip used by the original handshake design.
 
-The first connection may therefore be larger and slower.
+GSP 1.1 additionally introduces the **Handshake Context Cache (HCC)**.
 
-Subsequent connections can use a compact cache reference and exchange only the cryptographic material required to establish a fresh session.
+HCC allows previously negotiated handshake information to be referenced instead of retransmitted on subsequent connections.
 
-HCC is an optimization mechanism.
+The first connection may therefore carry more information.
 
-It is not an authentication mechanism by itself.
+Subsequent connections may use a compact cache reference and fresh cryptographic material.
 
----
+The HCC compact control reference targets **18 bytes**.
 
-# 2. Design Goals
-
-GSP Handshake 1.1 aims to provide:
-
-1. Strong cryptographic protection.
-2. Forward secrecy.
-3. Fresh traffic keys for every session.
-4. Authentication before authenticated application DATA.
-5. Minimal handshake overhead for repeated connections.
-6. Safe cache expiration.
-7. Safe cache invalidation.
-8. Protection against replay.
-9. Protection against cache poisoning.
-10. Graceful fallback when cached state is unavailable.
-11. Compatibility with GSP/TCP, GSP/UDP and GSP/QUIC.
-12. A compact control reference targeting approximately **18 bytes**.
-
-The 18-byte target applies to the compact cache reference/control structure.
-
-It does not imply that the complete cryptographic handshake is 18 bytes.
+The 18-byte reference is not itself a complete cryptographic handshake.
 
 ---
 
-# 3. Non-Goals
+# 2. Security Model
 
-GSP does not replace:
+A GSP handshake MUST establish a cryptographically protected session before normal authenticated application data is delivered.
 
-* IP
-* DNS
-* TCP
-* UDP
-* QUIC
-* HTTP
-* TLS
-* WebSocket
+A successful authenticated session provides:
 
-GSP may operate over different transports.
+* Confidentiality
+* Integrity
+* Authentication
+* Forward Secrecy
+* Replay Resistance
+* Downgrade Resistance
+* Key Separation
+* Session Binding
 
-The handshake is independent of the underlying transport.
+The exact authentication guarantees depend on the selected authentication mode.
 
----
+Anonymous mode does not provide authenticated peer identity.
 
-# 4. Cryptographic Algorithms
-
-The baseline GSP 1.1 profile uses:
-
-| Function        | Algorithm         |
-| --------------- | ----------------- |
-| Key exchange    | X25519            |
-| AEAD            | ChaCha20-Poly1305 |
-| Hash            | SHA-256           |
-| KDF             | HKDF-SHA-256      |
-| Transcript hash | SHA-256           |
-| Compression     | Optional LZ4      |
-
-Implementations MUST NOT silently substitute cryptographic algorithms.
-
-Future algorithm suites MUST be explicitly negotiated.
-
----
-
-# 5. Security Terminology
-
-### 5.1 Cold Connection
-
-A connection without usable cached handshake context.
-
-A cold connection performs the complete handshake.
-
-### 5.2 Warm Connection
-
-A connection using a valid HCC context.
-
-### 5.3 Cache Context
-
-A locally stored representation of previously negotiated handshake state.
-
-### 5.4 CACHE_ID
-
-An opaque identifier referencing a cache context.
-
-`CACHE_ID` is not a secret and is not authentication.
-
-### 5.5 Resumption Secret
-
-Secret material associated with a cache context and used to authenticate a resumed connection and derive fresh session keys.
-
-### 5.6 Context Hash
-
-A hash identifying the exact canonical cached context.
+The following invariant applies to authenticated sessions:
 
 ```text
-context_hash = SHA-256(canonical_context)
+NO VERIFIED RESPONDER
+        |
+        v
+NO AUTHENTICATED APPLICATION DATA
 ```
 
-### 5.7 Full Handshake
-
-A handshake in which required negotiation information is transmitted explicitly.
-
-### 5.8 Compact Resumption
-
-A handshake using HCC to avoid retransmitting cached negotiation state.
+The Initiator MUST verify the Responder's required authentication proof before sending authenticated application DATA in the optimized 1-RTT flight.
 
 ---
 
-# 6. Security Invariants
+# 3. Normative Language
 
-The following invariants are mandatory:
+The following keywords are normative:
+
+| Keyword    | Meaning      |
+| ---------- | ------------ |
+| MUST       | Required     |
+| MUST NOT   | Prohibited   |
+| REQUIRED   | Same as MUST |
+| SHOULD     | Recommended  |
+| SHOULD NOT | Discouraged  |
+| MAY        | Optional     |
+
+---
+
+# 4. Terminology
+
+| Term               | Definition                                              |
+| ------------------ | ------------------------------------------------------- |
+| Initiator          | Peer that starts the handshake                          |
+| Responder          | Peer that receives the initial handshake                |
+| Peer               | Either endpoint                                         |
+| Session            | Established GSP connection                              |
+| CID                | Connection Identifier                                   |
+| SID                | Session Identifier                                      |
+| KEX                | Key Exchange                                            |
+| AEAD               | Authenticated Encryption with Associated Data           |
+| PSK                | Pre-Shared Key                                          |
+| KDF                | Key Derivation Function                                 |
+| IV                 | Initialization Vector                                   |
+| PSIV               | Protocol Session Initialization Vector                  |
+| Transcript         | Ordered canonical representation of handshake messages  |
+| RTT                | Round Trip Time                                         |
+| Rekey              | Replacement of traffic keys                             |
+| HCC                | Handshake Context Cache                                 |
+| CACHE_ID           | Identifier referencing an HCC context                   |
+| Cache Generation   | Version number of a cache context                       |
+| Resumption Secret  | Secret used to authenticate and derive resumed sessions |
+| Cold Handshake     | Full handshake without a valid HCC context              |
+| Warm Handshake     | Handshake using a valid HCC context                     |
+| Compact Resumption | HCC-based resumed handshake                             |
+
+---
+
+# 5. Handshake Versions
+
+This specification defines:
 
 ```text
-CACHE_ID != AUTHENTICATION
-
-CACHE HIT != AUTHENTICATION
-
-CACHE HIT != SESSION ESTABLISHMENT
-
-EXPIRED CACHE != VALID CACHE
-
-INVALID CACHE -> FULL HANDSHAKE
-
-REUSED TRAFFIC KEY -> FORBIDDEN
-
-REUSED X25519 EPHEMERAL KEY -> FORBIDDEN
-
-UNVERIFIED RESPONDER -> NO AUTHENTICATED APPLICATION DATA
-
-FAILED AUTHENTICATION -> NO APPLICATION DATA
-
-FINAL TRANSCRIPT -> BINDS THE COMPLETE HANDSHAKE
+GSP/1.1
 ```
+
+Implementations MAY support earlier versions.
+
+A GSP implementation MUST NOT silently downgrade to an older version.
+
+The selected version MUST be cryptographically bound to the handshake transcript.
 
 ---
 
-# 7. Handshake Modes
+# 6. Handshake Objectives
+
+A successful handshake MUST establish:
+
+1. A mutually supported protocol version.
+2. A mutually supported cryptographic suite.
+3. A mutually supported key-exchange algorithm.
+4. A mutually supported authentication method.
+5. Negotiated transport parameters.
+6. Fresh ephemeral key material where forward secrecy is required.
+7. A shared secret.
+8. Derived traffic keys.
+9. Authentication state where required.
+10. A verified handshake transcript.
+11. Key confirmation.
+12. A unique session context.
+13. A valid session identifier.
+14. Fresh traffic-key state.
+15. Appropriate replay protection.
+
+---
+
+# 7. Optimized Handshake
+
+The original GSP handshake required:
+
+```text
+HELLO -> HELLO_ACK
+KEY_EXCHANGE -> KEY_EXCHANGE_ACK
+AUTH -> AUTH_ACK
+FINISH -> FINISH_ACK
+```
+
+This resulted in four sequential request/response exchanges.
+
+GSP 1.1 moves the ephemeral key exchange into the initial negotiation.
+
+The optimized authenticated handshake is:
+
+```text
+Initiator                                      Responder
+
+HELLO
++ X25519 public key
+---------------------------------------------->
+
+                         HELLO_ACK
+                         + X25519 public key
+                         + Responder authentication
+                         <----------------------
+
+Verify Responder authentication
+
+Derive shared secret
+Derive handshake keys
+
+FINISH
++ Initiator authentication
++ optional encrypted DATA
+---------------------------------------------->
+
+                         FINISH_ACK
+                         <----------------------
+
+                 SESSION ESTABLISHED
+```
+
+The separate `KEY_EXCHANGE` and `KEY_EXCHANGE_ACK` messages are therefore NOT required when using the GSP 1.1 integrated KEX profile.
+
+---
+
+# 8. RTT Characteristics
+
+The optimized handshake allows:
+
+```text
+HELLO -> HELLO_ACK
+```
+
+to provide the Initiator with:
+
+* selected parameters;
+* Responder random;
+* Responder ephemeral public key;
+* required Responder authentication proof.
+
+After receiving and successfully validating `HELLO_ACK`, the Initiator can derive the required cryptographic state.
+
+The Initiator may then send:
+
+```text
+FINISH + DATA
+```
+
+in the next flight.
+
+Therefore authenticated first application DATA can travel after approximately:
+
+```text
+1 RTT
+```
+
+from the beginning of the connection.
+
+The Responder MUST NOT deliver application DATA until the required Initiator authentication and FINISH verification succeed.
+
+---
+
+# 9. 1-RTT vs 0-RTT
+
+GSP 1.1 1-RTT MUST NOT be confused with 0-RTT.
+
+## 1-RTT
+
+The Initiator receives:
+
+```text
+HELLO_ACK
+```
+
+before transmitting authenticated encrypted application DATA.
+
+The Initiator MUST verify the Responder authentication contained in or bound to `HELLO_ACK` before transmitting such DATA.
+
+## 0-RTT
+
+The Initiator transmits application DATA before receiving the Responder's first response.
+
+0-RTT requires a previously established resumption secret or equivalent mechanism.
+
+0-RTT data is replay-sensitive and MUST NOT be enabled for arbitrary application operations.
+
+---
+
+# 10. Handshake Messages
 
 GSP 1.1 defines:
 
-```text
-FULL
-COMPACT
-0-RTT
-```
+| Type   | Name       |
+| ------ | ---------- |
+| `0x01` | HELLO      |
+| `0x02` | HELLO_ACK  |
+| `0x03` | AUTH       |
+| `0x04` | AUTH_ACK   |
+| `0x05` | FINISH     |
+| `0x06` | FINISH_ACK |
+| `0x07` | ALERT      |
+| `0x08` | RETRY      |
+| `0x09` | CLOSE      |
+| `0x0A` | KEY_UPDATE |
+| `0x0B` | RESUME     |
+| `0x0C` | RESUME_ACK |
 
-### FULL
+The former `KEY_EXCHANGE` messages are retained only as compatibility messages for profiles that explicitly require them.
 
-Used when no valid HCC context exists.
-
-### COMPACT
-
-Used when a valid HCC context exists.
-
-### 0-RTT
-
-Optional.
-
-0-RTT data is subject to additional replay restrictions and MUST NOT be treated as equivalent to normally authenticated post-handshake DATA.
-
----
-
-# 8. Cold Handshake
-
-A normal cold connection follows:
-
-```text
-Initiator                         Responder
-
-HELLO -------------------------->
-
-        <----------------------- HELLO_ACK
-
-FINISH ------------------------->
-
-        <----------------------- FINISH_ACK
-
-ESTABLISHED
-```
-
-The exact contents depend on the negotiated authentication profile.
-
----
-
-# 9. Compact Handshake
-
-A warm connection follows:
-
-```text
-Initiator                         Responder
-
-COMPACT_HELLO ------------------>
-
-        <----------------------- COMPACT_ACK
-
-FINISH ------------------------->
-
-        <----------------------- FINISH_ACK
-
-ESTABLISHED
-```
-
-The compact messages reference cached state.
-
-They MUST NOT depend on the cache identifier alone for security.
-
----
-
-# 10. Handshake Message Types
-
-The following message types are reserved:
-
-```text
-0x01 HELLO
-0x02 HELLO_ACK
-
-0x03 KEY_EXCHANGE
-0x04 KEY_EXCHANGE_ACK
-
-0x05 AUTH
-0x06 AUTH_ACK
-
-0x07 FINISH
-0x08 FINISH_ACK
-
-0x09 CLOSE
-0x0A ERROR
-
-0x0B RESUME
-0x0C RESUME_ACK
-
-0x0D COMPACT_HELLO
-0x0E COMPACT_ACK
-```
-
-Implementations MAY encode `RESUME`/`RESUME_ACK` as aliases of the compact resumption profile where wire compatibility is preserved.
+A GSP/1.1 implementation using integrated KEX MUST NOT require the compatibility KEX exchange.
 
 ---
 
 # 11. HELLO
 
-`HELLO` is sent by the Initiator.
-
-A full `HELLO` may contain:
+**Direction:**
 
 ```text
-version
-random
-capabilities
-cipher_suites
-key_exchange_suites
-authentication_modes
-compression
-extensions
-client_identity
-client_ephemeral_public_key
+Initiator -> Responder
 ```
 
-The exact encoding is profile-dependent.
+`HELLO` is the first handshake message.
+
+It advertises:
+
+* Supported GSP versions
+* Supported cipher suites
+* Supported KEX algorithms
+* Supported authentication methods
+* Supported compression algorithms
+* Capabilities
+* Maximum frame size
+* Maximum streams
+* Random value
+* Connection ID
+* Ephemeral KEX public key
+* Extensions
 
 ---
 
-# 12. HELLO_ACK
+# 12. HELLO Structure
 
-`HELLO_ACK` is sent by the Responder.
-
-A full response may contain:
+Logical representation:
 
 ```text
-version
-random
-selected_cipher
-selected_key_exchange
-selected_authentication
-selected_compression
-capabilities
+HELLO {
+    supported_versions[]
+    minimum_version
+
+    random
+    connection_id
+
+    cipher_suites[]
+    key_exchange[]
+    authentication[]
+    compression[]
+
+    capabilities
+
+    max_frame_size
+    max_streams
+
+    ephemeral_key
+
+    extensions[]
+}
+```
+
+The actual binary representation is defined by the GSP canonical serialization rules.
+
+---
+
+# 13. HELLO Random
+
+The Initiator MUST generate a fresh cryptographically secure random value.
+
+Recommended size:
+
+```text
+32 bytes
+```
+
+The value MUST NOT be reused for independent handshakes.
+
+---
+
+# 14. HELLO_ACK
+
+**Direction:**
+
+```text
+Responder -> Initiator
+```
+
+The Responder selects the parameters to be used for the session.
+
+Logical structure:
+
+```text
+HELLO_ACK {
+    selected_version
+
+    random
+    connection_id
+
+    selected_cipher
+    selected_key_exchange
+    selected_authentication
+    selected_compression
+
+    capabilities
+
+    max_frame_size
+    max_streams
+
+    ephemeral_key
+
+    responder_identity
+    responder_authentication_proof
+
+    extensions[]
+}
+```
+
+When the selected authentication mode requires authenticated Responder identity, the following MUST be present:
+
+```text
 responder_identity
-responder_ephemeral_public_key
 responder_authentication_proof
-extensions
 ```
 
-When responder authentication is required, the responder authentication proof MUST be included.
+The Responder MUST generate fresh ephemeral KEX material before sending `HELLO_ACK`.
+
+The authentication proof MUST be generated over a pre-authentication transcript that excludes the proof itself.
 
 ---
 
-# 13. Responder Authentication
+# 15. Version Negotiation
 
-Responder authentication MUST be bound to the handshake.
+The Initiator advertises supported versions.
 
-The responder proof MUST authenticate:
+Example:
 
-* protocol version
-* selected cryptographic parameters
-* Initiator random
-* Responder random
-* Initiator ephemeral public key
-* Responder ephemeral public key
-* relevant capabilities
-* pre-authentication transcript
+```text
+supported_versions = [
+    1.1,
+    1.0
+]
+```
 
-The proof MUST NOT authenticate itself.
+The Responder selects one mutually supported version.
+
+If no compatible version exists:
+
+```text
+VERSION_UNSUPPORTED
+```
+
+MUST be returned.
+
+The selected version MUST be included in the authenticated transcript.
 
 ---
 
-# 14. Pre-Authentication Transcript
+# 16. Cryptographic Suite Negotiation
 
-To avoid circular authentication, the responder proof is calculated over:
+Recommended initial profile:
+
+```text
+GSP-CHACHA20-POLY1305-X25519
+```
+
+The recommended profile uses:
+
+```text
+KEX:
+    X25519
+
+Hash:
+    SHA-256
+
+KDF:
+    HKDF-SHA-256
+
+AEAD:
+    ChaCha20-Poly1305
+```
+
+GSP SHOULD use established cryptographic primitives.
+
+GSP MUST NOT require applications to implement cryptographic primitives themselves.
+
+---
+
+# 17. KEX Negotiation
+
+The default GSP 1.1 KEX is:
+
+```text
+X25519
+```
+
+The Initiator generates:
+
+```text
+initiator_private_key
+initiator_public_key
+```
+
+The Responder generates:
+
+```text
+responder_private_key
+responder_public_key
+```
+
+Private keys MUST remain local.
+
+Only public keys are transmitted.
+
+---
+
+# 18. Integrated X25519 Exchange
+
+The Initiator places:
+
+```text
+initiator_public_key
+```
+
+inside `HELLO`.
+
+The Responder places:
+
+```text
+responder_public_key
+```
+
+inside `HELLO_ACK`.
+
+After receiving `HELLO_ACK`, both peers can independently derive:
+
+```text
+shared_secret
+```
+
+without another network exchange.
+
+---
+
+# 19. Shared Secret
+
+For X25519:
+
+```text
+shared_secret =
+    X25519(
+        initiator_private_key,
+        responder_public_key
+    )
+```
+
+The Responder independently calculates:
+
+```text
+shared_secret =
+    X25519(
+        responder_private_key,
+        initiator_public_key
+    )
+```
+
+The results MUST be identical.
+
+The shared secret MUST NEVER be transmitted.
+
+---
+
+# 20. Invalid KEX
+
+The handshake MUST fail if:
+
+* The public key has an invalid length.
+* The public key is malformed.
+* The selected KEX is unsupported.
+* The KEX operation fails.
+* The resulting shared secret is invalid according to the selected KEX profile.
+
+The connection MUST enter the `FAILED` state.
+
+---
+
+# 21. Authentication Modes
+
+GSP supports:
+
+```text
+ANONYMOUS
+PSK
+PUBLIC_KEY
+CERTIFICATE
+```
+
+Authentication is negotiated during `HELLO`.
+
+The selected authentication mode MUST be transcript-bound.
+
+---
+
+# 22. Anonymous Authentication
+
+Anonymous mode provides cryptographic protection against passive observers but does not authenticate the identity of the peer.
+
+Anonymous mode SHOULD NOT be used for security-sensitive applications.
+
+Under anonymous mode:
+
+* no authenticated peer identity is assumed;
+* no responder identity proof is required;
+* identity-bound operations MUST NOT assume peer authentication.
+
+Application DATA MUST NOT be attached to the `FINISH` flight under anonymous mode unless a separate profile explicitly defines the security semantics.
+
+---
+
+# 23. PSK Authentication
+
+PSK authentication uses a previously shared secret.
+
+The PSK MUST NOT be transmitted.
+
+Authentication MUST be bound to:
+
+* protocol version;
+* negotiated parameters;
+* random values;
+* ephemeral public keys;
+* authentication mode;
+* transcript;
+* session context.
+
+A raw password MUST NOT be used directly as a cryptographic PSK.
+
+A password-derived key MUST use an appropriate password-based KDF outside the handshake's normal HKDF construction.
+
+---
+
+# 24. Public-Key Authentication
+
+Public-key authentication allows a peer to prove possession of a private signing key.
+
+The authentication signature MUST cover the current handshake context.
+
+The signature MUST NOT be transferable to another handshake.
+
+For authenticated 1-RTT, the Responder's public-key authentication proof MUST be included in `HELLO_ACK` or otherwise cryptographically bound to the `HELLO_ACK` response.
+
+The Initiator MUST verify this proof before sending authenticated application DATA.
+
+---
+
+# 25. Certificate Authentication
+
+Certificate mode MAY use a certificate chain.
+
+Certificate validation is governed by the applicable GSP authentication profile.
+
+Certificate authentication MUST verify:
+
+* Certificate validity
+* Signature chain
+* Intended identity
+* Key usage
+* Expiration
+* Revocation policy where applicable
+
+The resulting authenticated identity MUST be bound to the handshake.
+
+---
+
+# 26. Responder Authentication Binding
+
+Responder authentication is divided into two transcript stages.
+
+This avoids circular authentication.
+
+## Pre-Authentication Context
+
+The Responder proof is calculated over:
 
 ```text
 T_pre_auth =
     "GSP-HANDSHAKE-RESPONDER-AUTH"
     ||
-    version
+    Encode(selected_version)
     ||
     Encode(HELLO)
     ||
@@ -365,13 +697,32 @@ pre_auth_transcript_hash =
     SHA-256(T_pre_auth)
 ```
 
-The responder authentication proof is generated from this context.
+The Responder authentication proof MUST cover this context.
+
+The proof MUST authenticate, directly or indirectly:
+
+* protocol version;
+* selected cipher;
+* selected KEX;
+* selected authentication mode;
+* selected compression;
+* relevant capabilities;
+* Initiator random;
+* Responder random;
+* Initiator ephemeral public key;
+* Responder ephemeral public key;
+* Responder identity;
+* connection context.
+
+The authentication proof MUST NOT include itself in the data it authenticates.
 
 ---
 
-# 15. Final Transcript
+# 27. Final Transcript
 
-After the responder proof has been generated:
+After the Responder authentication proof exists, the complete handshake transcript is constructed.
+
+Conceptually:
 
 ```text
 T_final =
@@ -381,169 +732,1604 @@ T_final =
     ||
     Encode(HELLO_ACK)
     ||
-    Encode(all authenticated handshake messages)
+    Encode(AUTH)
+    ||
+    Encode(AUTH_ACK)
+    ||
+    Encode(FINISH)
+```
+
+Messages not used by the selected profile are omitted.
+
+The complete `HELLO_ACK`, including the Responder authentication proof, MUST be included in the final transcript.
+
+---
+
+# 28. Authentication Verification Gate
+
+The Initiator MUST perform:
+
+```text
+Receive HELLO_ACK
+        |
+        v
+Validate parameters
+        |
+        v
+Validate Responder identity
+        |
+        v
+Verify Responder authentication proof
+        |
+        +---- FAIL ----> HANDSHAKE FAILED
+        |
+        v
+Responder authenticated
+        |
+        v
+Application DATA may be sent
+```
+
+This gate is mandatory for authenticated 1-RTT profiles.
+
+The Initiator MUST NOT bypass this gate because encryption keys have already been derived.
+
+Possession of a valid encryption key is not equivalent to authentication of the Responder.
+
+---
+
+# 29. Initiator Authentication
+
+The Initiator MAY authenticate itself through:
+
+* `FINISH`;
+* `AUTH`;
+* PSK proof;
+* public-key signature;
+* certificate-based proof.
+
+When Initiator authentication is required, the Responder MUST verify it before delivering application DATA to the application.
+
+Therefore:
+
+```text
+Responder receives FINISH + DATA
+        |
+        v
+Verify Initiator authentication
+        |
+        v
+Verify FINISH
+        |
+        v
+Decrypt DATA
+        |
+        v
+Deliver DATA to application
+```
+
+---
+
+# 30. AUTH
+
+For authentication profiles requiring an explicit authentication message:
+
+```text
+AUTH {
+    authentication_method
+    identity
+    credential
+    signature_or_mac
+}
+```
+
+The credential MUST be authenticated against the current handshake context.
+
+---
+
+# 31. AUTH_ACK
+
+The Responder MAY send:
+
+```text
+AUTH_ACK {
+    status
+    identity
+    credential
+    signature_or_mac
+}
+```
+
+If authentication succeeds:
+
+```text
+status = SUCCESS
+```
+
+Otherwise:
+
+```text
+AUTHENTICATION_FAILED
+```
+
+MUST be generated.
+
+---
+
+# 32. Integrated Authentication
+
+GSP 1.1 MAY integrate Initiator authentication directly into `FINISH`.
+
+The optimized profile may therefore use:
+
+```text
+FINISH {
+    authentication_data
+    verify_data
+}
+```
+
+instead of:
+
+```text
+AUTH
+AUTH_ACK
+```
+
+Responder authentication is different.
+
+For authenticated 1-RTT, Responder authentication MUST be available to the Initiator before the Initiator transmits authenticated application DATA.
+
+---
+
+# 33. Transcript
+
+The transcript is the canonical sequence of handshake messages.
+
+It MUST include all security-relevant negotiation and authentication state.
+
+---
+
+# 34. Transcript Domain Separation
+
+The transcript MUST use a GSP-specific context.
+
+Example:
+
+```text
+"GSP-HANDSHAKE-FINAL"
+```
+
+and:
+
+```text
+"GSP-HANDSHAKE-RESPONDER-AUTH"
+```
+
+Different cryptographic purposes MUST use different domain labels.
+
+---
+
+# 35. Transcript Hash
+
+The final transcript hash is:
+
+```text
+transcript_hash =
+    SHA-256(T_final)
+```
+
+The hash MUST operate on canonical wire representations.
+
+The transcript MUST NOT be calculated from language-level objects or compiler memory layouts.
+
+---
+
+# 36. Canonical Binary Encoding
+
+All GSP handshake messages MUST have a deterministic binary representation.
+
+The wire format MUST NOT depend on:
+
+* compiler;
+* CPU architecture;
+* struct padding;
+* ABI;
+* pointer size;
+* native endianness;
+* programming language;
+* memory alignment.
+
+---
+
+# 37. Integer Encoding
+
+All multi-byte integers MUST use:
+
+```text
+Big-Endian
+```
+
+also known as:
+
+```text
+Network Byte Order
+```
+
+This includes:
+
+```text
+uint16
+uint32
+uint64
+```
+
+---
+
+# 38. Explicit Integer Sizes
+
+The wire specification MUST use explicit integer widths.
+
+The following are forbidden in wire definitions:
+
+```text
+int
+long
+size_t
+unsigned long
+pointer
+```
+
+Instead:
+
+```text
+uint8
+uint16
+uint32
+uint64
+```
+
+MUST be used.
+
+---
+
+# 39. Fixed-Length Fields
+
+Cryptographic fields MUST have exact sizes.
+
+Examples:
+
+```text
+X25519 public key:
+    32 bytes
+
+SHA-256:
+    32 bytes
+
+ChaCha20-Poly1305 authentication tag:
+    16 bytes
+```
+
+Incorrect lengths MUST cause a parsing failure.
+
+---
+
+# 40. Variable-Length Fields
+
+Variable-length fields MUST use explicit lengths.
+
+Conceptually:
+
+```text
++----------+----------------+
+| Length   | Value          |
++----------+----------------+
+```
+
+The length itself MUST have a defined width and byte order.
+
+---
+
+# 41. No Compiler Padding
+
+Wire serialization MUST NOT use:
+
+```text
+sizeof(struct)
+```
+
+or equivalent native memory serialization.
+
+Every field MUST be explicitly encoded.
+
+---
+
+# 42. No Implicit Terminators
+
+Binary strings and byte arrays MUST NOT require a trailing NUL byte.
+
+The canonical representation is:
+
+```text
+length + bytes
+```
+
+unless a specific field explicitly defines another format.
+
+---
+
+# 43. Boolean Encoding
+
+Boolean values MUST be:
+
+```text
+0x00 = false
+0x01 = true
+```
+
+Other values MUST be rejected.
+
+---
+
+# 44. Enumeration Encoding
+
+Algorithm identifiers and other enumerations MUST use explicitly assigned numeric IDs.
+
+Unknown mandatory values MUST cause handshake failure.
+
+---
+
+# 45. Optional Fields
+
+Optional fields MUST have an unambiguous representation.
+
+An absent field and an empty field MUST only be considered equivalent if explicitly defined by that message.
+
+---
+
+# 46. Extension Encoding
+
+Recommended extension structure:
+
+```text
+extension {
+    type
+    flags
+    length
+    value
+}
+```
+
+Recommended wire types:
+
+```text
+type:
+    uint16
+
+flags:
+    uint16
+
+length:
+    uint32
+```
+
+All values use Big-Endian.
+
+---
+
+# 47. Extension Ordering
+
+Extensions MUST appear in ascending numeric order unless an extension specification explicitly defines another ordering.
+
+This ensures deterministic transcript generation.
+
+---
+
+# 48. Duplicate Extensions
+
+Duplicate extensions MUST be rejected unless the extension specification explicitly permits multiple instances.
+
+---
+
+# 49. Unknown Extensions
+
+Unknown optional extensions MAY be ignored.
+
+Unknown mandatory extensions MUST produce:
+
+```text
+UNSUPPORTED_EXTENSION
+```
+
+---
+
+# 50. Key Derivation
+
+The raw X25519 shared secret MUST NOT directly become an AEAD key.
+
+The recommended KDF is:
+
+```text
+HKDF-SHA-256
+```
+
+Conceptually:
+
+```text
+PRK =
+    HKDF-Extract(
+        salt,
+        shared_secret
+    )
+```
+
+followed by domain-separated expansion.
+
+---
+
+# 51. Session Salt
+
+A session-specific salt SHOULD be derived from both random values.
+
+Conceptually:
+
+```text
+salt =
+    SHA-256(
+        initiator_random ||
+        responder_random
+    )
+```
+
+---
+
+# 52. Handshake Secret
+
+The handshake secret is derived using a domain-separated label:
+
+```text
+"GSP/1.1 handshake"
+```
+
+The label MUST be included in the KDF context.
+
+---
+
+# 53. Traffic Keys
+
+Separate traffic keys MUST be derived for each direction.
+
+At minimum:
+
+```text
+initiator_write_key
+responder_write_key
+
+initiator_write_iv
+responder_write_iv
+```
+
+---
+
+# 54. Finished Keys
+
+Finished verification keys MUST be separate from traffic encryption keys.
+
+Example labels:
+
+```text
+"GSP/1.1 initiator finished"
+"GSP/1.1 responder finished"
+```
+
+---
+
+# 55. Key Separation
+
+A single cryptographic key MUST NOT be reused for:
+
+* handshake authentication;
+* Finished verification;
+* Initiator traffic;
+* Responder traffic;
+* resumption authentication;
+* unrelated protocol purposes.
+
+Each purpose MUST use independently derived material.
+
+---
+
+# 56. Role Separation
+
+The cryptographic context MUST distinguish:
+
+```text
+INITIATOR
+RESPONDER
+```
+
+Directional labels MUST be used during key derivation.
+
+This prevents reflection attacks and cross-direction key confusion.
+
+---
+
+# 57. Session Identifier
+
+The session identifier SHOULD be derived from the handshake context.
+
+Conceptually:
+
+```text
+SID =
+    SHA-256(
+        "GSP/1.1 SID" ||
+        initiator_random ||
+        responder_random ||
+        initiator_public_key ||
+        responder_public_key ||
+        negotiated_parameters
+    )
+```
+
+The SID is an identifier and MUST NOT be treated as a secret.
+
+---
+
+# 58. AEAD Encryption
+
+The recommended AEAD is:
+
+```text
+ChaCha20-Poly1305
+```
+
+Every encrypted record requires a unique nonce for its key.
+
+---
+
+# 59. AEAD Nonce Invariant
+
+The following rule is absolute:
+
+```text
+A (Key, Nonce) pair MUST NEVER be reused.
+```
+
+Nonce reuse under ChaCha20-Poly1305 is catastrophic.
+
+---
+
+# 60. Sequence Numbers
+
+Each traffic direction has its own sequence number:
+
+```text
+initiator_send_sequence
+responder_send_sequence
+```
+
+The counters are independent.
+
+---
+
+# 61. Initial Sequence Number
+
+The first encrypted record MAY use:
+
+```text
+sequence_number = 0
+```
+
+This is valid.
+
+The security requirement is that the same sequence number MUST NOT be reused with the same traffic key.
+
+---
+
+# 62. Sequence Increment
+
+For every new encrypted record:
+
+```text
+sequence_number += 1
+```
+
+The sequence number MUST be incremented monotonically under the current key.
+
+---
+
+# 63. Sequence Number Reset
+
+A sequence number MUST NOT be reset while the same traffic key remains active.
+
+A reset is permitted only after a successful key update.
+
+Example:
+
+```text
+Key A
+sequence 0..N
+    |
+    v
+KEY_UPDATE
+    |
+    v
+Key B
+sequence 0
+```
+
+---
+
+# 64. Sequence Number Width
+
+GSP 1.1 defines:
+
+```text
+uint64
+```
+
+for encrypted-record sequence numbers.
+
+Valid values:
+
+```text
+0 .. 2^64 - 1
+```
+
+---
+
+# 65. Sequence Number Wrap
+
+Sequence numbers MUST NOT wrap.
+
+This is forbidden:
+
+```text
+2^64 - 1 -> 0
+```
+
+under the same key.
+
+---
+
+# 66. Rekey Before Exhaustion
+
+Implementations SHOULD initiate `KEY_UPDATE` before sequence exhaustion.
+
+If the final sequence value is reached and no safe key update can occur, the connection MUST be terminated.
+
+The implementation MUST NOT wrap the counter.
+
+---
+
+# 67. Nonce Construction
+
+For profiles using a static-IV construction:
+
+```text
+nonce =
+    static_iv XOR sequence_number_encoded
+```
+
+For a 96-bit nonce:
+
+```text
+static_iv:
+    96 bits
+
+sequence_number:
+    64 bits
+
+encoded_sequence:
+    96-bit zero-extended value
 ```
 
 Then:
 
 ```text
-transcript_hash = SHA-256(T_final)
+96-bit static_iv
+XOR
+96-bit encoded sequence
+=
+96-bit nonce
 ```
-
-The final transcript MUST include the responder authentication proof.
 
 ---
 
-# 16. X25519
+# 68. Nonce Uniqueness
 
-Each normal GSP session MUST use fresh X25519 ephemeral keys when the negotiated profile provides forward secrecy.
-
-The following is forbidden:
+The implementation MUST guarantee that:
 
 ```text
-reuse previous X25519 private key
-reuse previous X25519 public key
+same key + same sequence
 ```
 
-Caching an X25519 ephemeral private key solely to reduce handshake size is NOT permitted.
+never results in two independently generated encrypted records.
 
 ---
 
-# 17. Key Derivation
+# 69. Retransmission
 
-The X25519 shared secret is:
+On unreliable transports, retransmission MUST NOT accidentally create nonce reuse.
+
+A retransmitted logical record SHOULD reuse the same already-created ciphertext rather than independently encrypting the same plaintext with the same cryptographic state.
+
+The implementation MUST distinguish:
 
 ```text
-shared_secret = X25519(
-    initiator_ephemeral_private,
-    responder_ephemeral_public
-)
+retransmission of existing ciphertext
 ```
 
-The responder computes the equivalent operation.
-
-HKDF-SHA-256 is then used.
-
-The derivation MUST include:
+from:
 
 ```text
-protocol identifier
-protocol version
-negotiated parameters
-transcript hash
-shared secret
+new encrypted record
 ```
 
-Traffic keys MUST be directional.
+---
 
-For example:
+# 70. Receive Sequence Validation
+
+For ordered transports, the receiver SHOULD require:
 
 ```text
-initiator_to_responder_key
-responder_to_initiator_key
+received_sequence == expected_sequence
 ```
 
-The same key MUST NOT be used in both directions.
+For unordered transports, GSP MAY use a replay window.
+
+Old or already accepted sequence numbers MUST be rejected.
 
 ---
 
-# 18. Traffic Key Freshness
+# 71. FINISH
 
-Every established session MUST derive new traffic keys.
+`FINISH` confirms possession of the derived handshake keys.
 
-A resumed session MUST NOT simply restore the previous traffic keys.
-
-HCC stores state required to establish a new session.
-
-It does not store active traffic keys for reuse.
-
----
-
-# 19. FINISH
-
-`FINISH` proves possession of the required handshake secrets and binds the handshake transcript.
-
-The FINISH authenticator is derived from the handshake key material and:
+Conceptually:
 
 ```text
-transcript_hash
+FINISH {
+    authentication_data
+    verify_data
+    optional_data
+}
 ```
 
-A receiver MUST reject a FINISH whose transcript does not match.
+`optional_data` MUST only be used when the selected authentication profile permits application DATA in this flight.
 
 ---
 
-# 20. Application DATA Gate
+# 72. Finished Verification
 
-Application DATA is permitted only after the required authentication conditions have been satisfied.
-
-For authenticated profiles:
+Conceptually:
 
 ```text
-NO VERIFIED RESPONDER
-        |
-        v
-NO APPLICATION DATA
+verify_data =
+    HMAC(
+        finished_key,
+        transcript_hash
+    )
 ```
 
-The Initiator MUST NOT send authenticated application DATA before successful responder authentication.
+The exact Finished construction MUST be defined by the selected cryptographic profile.
 
 ---
 
-# 21. Anonymous Mode
+# 73. FINISH_ACK
 
-Anonymous mode provides confidentiality without peer identity authentication.
+The Responder returns:
 
-Under ANONYMOUS:
+```text
+FINISH_ACK {
+    verify_data
+}
+```
 
-* responder identity is absent;
-* responder authentication proof is absent;
-* identity-bound features MUST NOT assume a verified peer;
-* authenticated application semantics MUST NOT be inferred.
-
-Application DATA MUST NOT be attached to the FINISH flight in anonymous mode.
-
----
-
-# 22. Handshake Context Cache
-
-HCC is a protocol-level cache containing previously established handshake context.
-
-HCC exists to avoid retransmitting static or previously negotiated information.
-
-The cache MAY be implemented using:
-
-* memory
-* local files
-* databases
-* secure platform storage
-* hardware-backed storage
-
-The wire protocol does not require a filesystem.
+The Initiator MUST verify this value before considering the session fully established.
 
 ---
 
-# 23. HCC Context Structure
+# 74. Application DATA Security Gate
+
+The optimized GSP 1.1 profile MUST enforce the following sequence:
+
+```text
+HELLO
+   |
+   v
+HELLO_ACK
+   |
+   v
+Verify Responder
+   |
+   v
+Derive/use handshake keys
+   |
+   v
+FINISH + DATA
+```
+
+The following is prohibited:
+
+```text
+HELLO_ACK received
+       |
+       X
+       |
+send DATA without verifying Responder
+```
+
+Encryption alone is not sufficient to authenticate the Responder.
+
+---
+
+# 75. FINISH + DATA
+
+The Initiator MAY attach encrypted application DATA to the same flight as `FINISH`.
+
+This is the primary GSP 1-RTT latency optimization.
+
+However, the Initiator MUST have successfully verified the Responder authentication required by the selected authentication mode before sending that DATA.
+
+The Responder MUST NOT deliver the DATA to the application until:
+
+1. Required Initiator authentication succeeds.
+2. Finished verification succeeds.
+3. Transcript verification succeeds.
+4. AEAD authentication succeeds.
+5. All relevant replay/state checks succeed.
+
+---
+
+# 76. Anonymous DATA
+
+Under ANONYMOUS mode, the Initiator MUST NOT attach application DATA to `FINISH` unless an explicit anonymous-data profile defines the exact semantics.
+
+The default anonymous profile therefore uses:
+
+```text
+HELLO
+HELLO_ACK
+FINISH
+FINISH_ACK
+DATA
+```
+
+This prevents anonymous mode from being confused with an authenticated 1-RTT profile.
+
+---
+
+# 77. Handshake State Machine
+
+```text
+                         +------+
+                         | IDLE |
+                         +--+---+
+                            |
+                          HELLO
+                            |
+                            v
+                    +---------------+
+                    | HELLO_SENT    |
+                    +-------+-------+
+                            |
+                       HELLO_ACK
+                            |
+                            v
+                +-----------------------+
+                | PARAMETERS_NEGOTIATED |
+                +-----------+-----------+
+                            |
+                  VERIFY RESPONDER
+                            |
+                    +-------+-------+
+                    |               |
+                  FAIL            PASS
+                    |               |
+                    v               v
+                 FAILED      +-------------+
+                             | KEYS_DERIVED|
+                             +------+------+
+                                    |
+                              FINISH/AUTH
+                                    |
+                                    v
+                           +----------------+
+                           | AUTHENTICATING |
+                           +-------+--------+
+                                   |
+                              VERIFY FINISH
+                                   |
+                                   v
+                           +----------------+
+                           | KEY_CONFIRMATION|
+                           +-------+--------+
+                                   |
+                              FINISH_ACK
+                                   |
+                                   v
+                           +----------------+
+                           |  ESTABLISHED   |
+                           +----------------+
+```
+
+---
+
+# 78. Initiator Algorithm
+
+The Initiator MUST:
+
+1. Generate a fresh random value.
+2. Generate a fresh ephemeral KEX key pair.
+3. Construct `HELLO`.
+4. Include its ephemeral public key.
+5. Send `HELLO`.
+6. Receive `HELLO_ACK`.
+7. Validate the selected version.
+8. Validate the selected cipher.
+9. Validate the selected KEX.
+10. Validate the authentication method.
+11. Validate extensions.
+12. Validate the Responder public key.
+13. Validate the Responder identity when required.
+14. Verify the Responder authentication proof when required.
+15. Reject the handshake if required Responder authentication fails.
+16. Calculate the shared secret.
+17. Construct the pre-authentication context where required.
+18. Construct the final canonical transcript.
+19. Derive handshake secrets.
+20. Derive traffic keys.
+21. Construct `FINISH`.
+22. Attach encrypted DATA only if the authentication gate has passed.
+23. Send `FINISH`.
+24. Receive `FINISH_ACK`.
+25. Verify `FINISH_ACK`.
+26. Transition to `ESTABLISHED`.
+
+---
+
+# 79. Responder Algorithm
+
+The Responder MUST:
+
+1. Receive `HELLO`.
+2. Validate the message.
+3. Validate all lengths.
+4. Validate the protocol version.
+5. Select compatible parameters.
+6. Generate a fresh random value.
+7. Generate a fresh ephemeral KEX key pair.
+8. Construct the `HELLO_ACK`.
+9. Construct the Responder authentication proof when required.
+10. Include the proof in `HELLO_ACK`.
+11. Send `HELLO_ACK`.
+12. Calculate the shared secret.
+13. Construct the canonical transcript.
+14. Derive handshake secrets.
+15. Derive traffic keys.
+16. Receive `FINISH`.
+17. Verify Initiator authentication where required.
+18. Verify Finished data.
+19. Verify transcript state.
+20. Authenticate/decrypt DATA.
+21. Deliver DATA only after all required validation succeeds.
+22. Send `FINISH_ACK`.
+23. Transition to `ESTABLISHED`.
+
+---
+
+# 80. Handshake Timeout
+
+Implementations MUST enforce a handshake timeout.
+
+Recommended timers:
+
+```text
+HELLO_TIMEOUT
+AUTH_TIMEOUT
+FINISH_TIMEOUT
+TOTAL_HANDSHAKE_TIMEOUT
+```
+
+A timeout MUST result in:
+
+```text
+HANDSHAKE_TIMEOUT
+```
+
+and the session MUST enter `FAILED`.
+
+---
+
+# 81. Retry
+
+A Responder MAY send:
+
+```text
+RETRY
+```
+
+before performing expensive cryptographic work.
+
+Example:
+
+```text
+Initiator -> HELLO
+Responder -> RETRY
+Initiator -> HELLO + retry_token
+Responder -> HELLO_ACK
+```
+
+---
+
+# 82. Retry Token
+
+A retry token MAY contain:
+
+* timestamp;
+* client binding;
+* original random;
+* expiration;
+* authentication tag.
+
+The token MUST be integrity protected.
+
+The token SHOULD be stateless from the server's perspective.
+
+Tokens MUST expire.
+
+---
+
+# 83. Replay Protection
+
+GSP uses:
+
+* fresh random values;
+* fresh ephemeral keys;
+* transcript binding;
+* session identifiers;
+* sequence numbers;
+* authentication.
+
+High-security deployments MAY additionally maintain replay caches.
+
+---
+
+# 84. Downgrade Protection
+
+The transcript MUST cover:
+
+* supported versions;
+* selected version;
+* supported ciphers;
+* selected cipher;
+* supported KEX;
+* selected KEX;
+* supported authentication methods;
+* selected authentication method;
+* supported compression;
+* selected compression.
+
+An attacker MUST NOT be able to silently force a weaker negotiated configuration.
+
+---
+
+# 85. Capability Negotiation
+
+Capabilities MAY include:
+
+```text
+MULTISTREAM
+COMPRESSION
+DATAGRAM
+MIGRATION
+LARGE_FRAMES
+WIRELESS_DISPLAY
+TERMINAL
+FILE_TRANSFER
+```
+
+Capabilities MUST be explicitly negotiated.
+
+A peer MUST NOT assume that a capability exists simply because it is implemented locally.
+
+---
+
+# 86. Compression
+
+Supported compression algorithms MAY include:
+
+```text
+NONE
+LZ4
+```
+
+Compression occurs before encryption:
+
+```text
+Application Data
+       |
+       v
+Compression
+       |
+       v
+Framing
+       |
+       v
+AEAD
+       |
+       v
+Transport
+```
+
+Encrypted data MUST NOT be compressed.
+
+Handshake compression MUST be limited and MUST NOT be applied to unauthenticated attacker-controlled material when doing so could create a security problem.
+
+---
+
+# 87. Maximum Frame Size
+
+Peers MAY negotiate:
+
+```text
+max_frame_size
+```
+
+The value MUST respect implementation and transport limits.
+
+An oversized frame MUST be rejected.
+
+---
+
+# 88. Maximum Streams
+
+For stream-capable GSP implementations:
+
+```text
+max_streams
+```
+
+MAY be negotiated.
+
+The negotiated value becomes active after handshake establishment.
+
+---
+
+# 89. Maximum Handshake Size
+
+Implementations MUST impose a maximum handshake size.
+
+A recommended baseline is:
+
+```text
+MAX_HANDSHAKE_SIZE = 64 KiB
+```
+
+Implementations MAY choose a different limit.
+
+Unbounded memory allocation based on remote length fields is forbidden.
+
+---
+
+# 90. Fragmentation
+
+Handshake messages MAY be fragmented by the transport.
+
+Fragments MUST be reconstructed before transcript processing.
+
+Transport fragmentation MUST NOT change the logical handshake message.
+
+---
+
+# 91. Transport Independence
+
+The handshake is designed to operate over:
+
+```text
+GSP/TCP
+GSP/UDP
+GSP/QUIC
+```
+
+and other GSP-compatible transports.
+
+The handshake MUST NOT assume ordered reliable delivery unless the transport provides it.
+
+---
+
+# 92. Datagram Requirements
+
+For unreliable datagram transports:
+
+* Retransmission MUST be supported.
+* Duplicate detection MUST be supported.
+* Handshake timeouts MUST exist.
+* Sequence state MUST be tracked.
+* Fragmentation MUST be bounded.
+* Replay protection MUST be enforced.
+
+---
+
+# 93. Duplicate Messages
+
+A duplicate message MAY be accepted when it is a valid retransmission.
+
+A conflicting duplicate MUST terminate the handshake.
+
+The implementation MUST distinguish:
+
+```text
+valid retransmission
+```
+
+from:
+
+```text
+modified duplicate
+```
+
+---
+
+# 94. Handshake Errors
+
+GSP defines:
+
+| Code   | Name                      |
+| ------ | ------------------------- |
+| `0x01` | UNKNOWN_ERROR             |
+| `0x02` | INVALID_MESSAGE           |
+| `0x03` | INVALID_VERSION           |
+| `0x04` | VERSION_UNSUPPORTED       |
+| `0x05` | INVALID_CIPHER            |
+| `0x06` | CIPHER_UNSUPPORTED        |
+| `0x07` | INVALID_KEX               |
+| `0x08` | KEX_FAILED                |
+| `0x09` | AUTHENTICATION_FAILED     |
+| `0x0A` | INVALID_SIGNATURE         |
+| `0x0B` | INVALID_MAC               |
+| `0x0C` | TRANSCRIPT_MISMATCH       |
+| `0x0D` | KEY_CONFIRMATION_FAILED   |
+| `0x0E` | INVALID_EXTENSION         |
+| `0x0F` | UNSUPPORTED_EXTENSION     |
+| `0x10` | INVALID_STATE             |
+| `0x11` | TIMEOUT                   |
+| `0x12` | REPLAY_DETECTED           |
+| `0x13` | DOWNGRADE_DETECTED        |
+| `0x14` | FRAME_TOO_LARGE           |
+| `0x15` | INVALID_LENGTH            |
+| `0x16` | NONCE_REUSE               |
+| `0x17` | SEQUENCE_EXHAUSTED        |
+| `0x18` | INTERNAL_ERROR            |
+| `0x19` | CACHE_MISS                |
+| `0x1A` | CACHE_EXPIRED             |
+| `0x1B` | CACHE_INVALID             |
+| `0x1C` | CACHE_REVOKED             |
+| `0x1D` | CACHE_GENERATION_MISMATCH |
+| `0x1E` | CACHE_CONTEXT_MISMATCH    |
+| `0x1F` | RESUMPTION_AUTH_FAILED    |
+| `0x20` | CACHE_REPLAY_DETECTED     |
+
+---
+
+# 95. ALERT
+
+Logical structure:
+
+```text
+ALERT {
+    severity
+    error_code
+    diagnostic_data
+}
+```
+
+Severity:
+
+```text
+WARNING
+FATAL
+```
+
+Fatal handshake errors MUST terminate the handshake.
+
+---
+
+# 96. Diagnostic Data
+
+Diagnostic data MUST NOT contain:
+
+* private keys;
+* shared secrets;
+* PSKs;
+* traffic keys;
+* plaintext credentials;
+* sensitive application data.
+
+Production servers SHOULD avoid exposing detailed cryptographic failure information to unauthenticated clients.
+
+---
+
+# 97. Invalid State
+
+Messages received in an invalid state MUST produce:
+
+```text
+INVALID_STATE
+```
+
+Examples:
+
+```text
+DATA before key confirmation
+AUTH before KEX
+FINISH before required key derivation
+FINISH_ACK before FINISH
+```
+
+---
+
+# 98. Denial-of-Service Protection
+
+The Responder SHOULD perform cheap validation before expensive cryptographic operations.
+
+Recommended order:
+
+```text
+Parse
+  ↓
+Length validation
+  ↓
+Version validation
+  ↓
+Capability validation
+  ↓
+Rate limiting / Retry
+  ↓
+Cryptographic processing
+```
+
+---
+
+# 99. Rate Limiting
+
+Servers SHOULD rate-limit handshake attempts.
+
+Possible limits include:
+
+* source address;
+* connection identifier;
+* authentication identity;
+* global server rate.
+
+---
+
+# 100. Forward Secrecy
+
+The default X25519 profile uses ephemeral keys.
+
+The private ephemeral keys SHOULD be securely erased after key establishment.
+
+Compromise of a long-term authentication key SHOULD NOT expose previous sessions when ephemeral forward secrecy is correctly implemented.
+
+An HCC implementation MUST NOT reuse old ephemeral X25519 private keys solely to reduce handshake size.
+
+---
+
+# 101. Secret Erasure
+
+After key establishment, implementations SHOULD erase:
+
+* ephemeral private key;
+* raw shared secret;
+* temporary KDF state;
+* unused handshake secrets.
+
+Only required session state should remain.
+
+---
+
+# 102. Key Update
+
+GSP supports optional:
+
+```text
+KEY_UPDATE
+```
+
+for traffic key rotation.
+
+A successful key update MUST produce new traffic keys.
+
+The old keys MUST NOT be reused after retirement.
+
+---
+
+# 103. Key Update Sequence Reset
+
+After a successful key update:
+
+```text
+old key
+sequence = N
+
+        ↓
+
+KEY_UPDATE
+
+        ↓
+
+new key
+sequence = 0
+```
+
+Resetting the sequence number is safe because the encryption key has changed.
+
+---
+
+# 104. Key Update Failure
+
+If a safe key update cannot be completed before sequence exhaustion:
+
+```text
+CLOSE
+```
+
+MUST occur.
+
+The implementation MUST NEVER allow sequence-number wrap.
+
+---
+
+# 105. Session Resumption
+
+GSP MAY support session resumption.
+
+A resumption ticket MUST NOT contain raw traffic keys.
+
+The ticket SHOULD contain or represent protected resumption state.
+
+Resumption MUST establish fresh session traffic keys.
+
+---
+
+# 106. RESUME
+
+Conceptually:
+
+```text
+RESUME {
+    ticket
+    random
+    supported_parameters
+}
+```
+
+The Responder validates the ticket and establishes fresh session keys.
+
+---
+
+# 107. RESUME_ACK
+
+Conceptually:
+
+```text
+RESUME_ACK {
+    selected_parameters
+    random
+    ephemeral_key
+    authentication_proof
+}
+```
+
+The resumed session SHOULD use fresh ephemeral key material where forward secrecy is required.
+
+---
+
+# 108. 0-RTT Resumption
+
+0-RTT MAY be implemented using a previously established resumption secret.
+
+0-RTT MUST be explicitly enabled by the application/profile.
+
+Replay-sensitive operations MUST NOT be sent using unrestricted 0-RTT.
+
+0-RTT does not replace Responder authentication.
+
+An application MUST understand that the first 0-RTT DATA flight occurs before the current Responder authentication response.
+
+---
+
+# 109. Handshake Context Cache
+
+GSP 1.1 introduces the:
+
+```text
+Handshake Context Cache
+```
+
+or:
+
+```text
+HCC
+```
+
+HCC stores previously negotiated and authenticated handshake context.
+
+Its purpose is to avoid retransmitting information that both peers already possess.
+
+The first connection may therefore be larger.
+
+Subsequent connections may use a compact reference.
+
+---
+
+# 110. HCC Design Principle
+
+The fundamental HCC rule is:
+
+```text
+DO NOT SEND AGAIN
+WHAT BOTH SIDES ALREADY KNOW
+```
+
+A cold connection:
+
+```text
+negotiate
+authenticate
+establish
+cache
+```
+
+A warm connection:
+
+```text
+reference
+prove possession
+derive fresh keys
+establish
+```
+
+HCC is an optimization layer.
+
+It does not replace cryptographic authentication.
+
+---
+
+# 111. HCC Context
 
 A cache entry SHOULD contain:
 
 ```text
 cache_id
 cache_generation
+
+hcc_version
+
 protocol_version
+
 cipher_suite
 key_exchange_suite
 authentication_mode
 compression_mode
+
 capabilities
+
 peer_identity
 peer_identity_binding
+
 context_hash
+
 resumption_secret
+
 created_at
 last_used_at
 expires_at
 idle_expires_at
+
 credential_generation
 protocol_generation
 ```
@@ -552,7 +2338,6 @@ Optional fields MAY include:
 
 ```text
 transport_profile
-server_name
 application_profile
 extension_set
 resumption_policy
@@ -561,73 +2346,71 @@ resumption_policy
 
 ---
 
-# 24. Context Hash
+# 112. HCC Context Hash
 
-The cache context is canonicalized.
+The cache context MUST have a canonical representation.
 
 Then:
 
 ```text
 context_hash =
-    SHA-256(canonical_context)
+    SHA-256(
+        canonical_context
+    )
 ```
 
-The `context_hash` binds the cached parameters to the resumption state.
-
-Changing security-sensitive cached parameters MUST result in a different context hash.
+Security-sensitive context changes MUST produce a different context hash.
 
 ---
 
-# 25. CACHE_ID
+# 113. CACHE_ID
 
 `CACHE_ID` is an opaque identifier.
 
-The compact baseline representation uses:
+The compact baseline representation is:
 
 ```text
-CACHE_ID = 64 bits
+64 bits
 ```
 
-Implementations intended for large public deployments SHOULD use a larger identifier when the profile permits it.
+`CACHE_ID` MUST NOT be considered a secret.
 
-`CACHE_ID` MUST NOT be treated as a password.
+Knowledge of `CACHE_ID` alone MUST NOT authorize resumption.
 
-Knowledge of a `CACHE_ID` alone MUST NOT allow session establishment.
+High-scale or high-security deployments MAY use larger identifiers.
 
 ---
 
-# 26. Cache Generation
+# 114. Cache Generation
 
-Every cache entry has a generation value.
+Every HCC entry has a generation value.
+
+The compact baseline uses:
+
+```text
+64 bits
+```
 
 Example:
 
 ```text
-cache_generation = 64 bits
+CACHE_ID = A71C92E41F0082B3
+GENERATION = 4
 ```
 
-Generation values allow an implementation to invalidate older state without immediately changing the cache identifier.
-
-Example:
+After invalidation or security-sensitive replacement:
 
 ```text
-CACHE_ID = 0x1234...
-GENERATION = 7
+GENERATION = 5
 ```
 
-After invalidation:
-
-```text
-GENERATION = 8
-```
-
-Older generation 7 entries MUST be rejected.
+Older generations MUST be rejected.
 
 ---
 
-# 27. The 18-Byte Compact Reference
+# 115. 18-Byte HCC Reference
 
-The minimum compact reference is:
+The compact HCC control reference is:
 
 ```text
 +--------+--------+----------------+------------------+
@@ -642,121 +2425,135 @@ Total:
 1 + 1 + 8 + 8 = 18 bytes
 ```
 
-This is the **18-byte HCC control/reference structure**.
-
-It is not a complete cryptographic handshake.
+This is the official HCC compact-reference target.
 
 ---
 
-# 28. Meaning of the 18-Byte Target
+# 116. Meaning of the 18-Byte Reference
 
-The 18-byte structure allows GSP to represent:
+The 18-byte structure identifies:
 
 ```text
-which cached context?
-which generation?
-which compact operation?
+compact operation
+cached context
+cache generation
 ```
 
-without retransmitting:
+It does NOT contain all cryptographic material.
 
-* capabilities
-* cipher lists
-* compression configuration
-* identity metadata
-* extension metadata
-* previously negotiated parameters
+It does NOT prove identity.
 
-Those values are recovered from the validated cache context.
+It does NOT authenticate the peer.
+
+It does NOT contain the complete handshake.
 
 ---
 
-# 29. Compact Cryptographic Payload
+# 117. Compact Cryptographic Payload
 
-The cryptographic payload remains separate from the 18-byte reference.
-
-A secure compact session may additionally require:
+A secure compact connection may additionally require:
 
 ```text
 fresh nonce
 fresh X25519 public key
 resumption authenticator
 transcript binding
+Finished verification
 ```
 
 Therefore:
 
 ```text
-18-byte reference
+18-byte HCC reference
 +
 cryptographic payload
 =
 actual compact handshake
 ```
 
-The complete handshake is therefore larger than 18 bytes.
-
 ---
 
-# 30. Compact Handshake Target
+# 118. Compact Handshake Size Target
 
-GSP 1.1 defines the following engineering targets:
+GSP HCC defines these engineering targets:
 
 ```text
 18 bytes
-    compact control/reference
+    HCC control/reference
 
 ~80–120 bytes
     aggressive compact cryptographic exchange
 
 ~120–180 bytes
-    conservative compact exchange with stronger authentication material
+    conservative compact exchange
 ```
 
 Actual size depends on:
 
-* authentication profile
-* X25519 inclusion
-* transport framing
-* optional extensions
-* authenticator encoding
-* 0-RTT
-* implementation encoding
+* authentication profile;
+* KEX profile;
+* ticket format;
+* transport framing;
+* extensions;
+* cryptographic authenticator;
+* optional 0-RTT.
 
-These values are targets, not mandatory fixed packet sizes.
+These are targets, not fixed mandatory handshake sizes.
 
 ---
 
-# 31. Resumption Secret
+# 119. Why the Complete Handshake Is Not 18 Bytes
+
+X25519 public keys require:
+
+```text
+32 bytes
+```
+
+A cryptographically authenticated session also requires authentication material and freshness.
+
+Therefore GSP MUST NOT claim:
+
+```text
+"complete secure X25519 handshake = 18 bytes"
+```
+
+The correct statement is:
+
+```text
+"HCC compact control reference = 18 bytes."
+```
+
+---
+
+# 120. Resumption Secret
 
 A successful full handshake creates a resumption secret.
 
-The resumption secret MUST be cryptographically bound to:
+It MUST be cryptographically bound to:
 
-```text
-peer identity
-protocol version
-negotiated parameters
-context_hash
-handshake transcript
-```
+* peer identity;
+* protocol version;
+* negotiated parameters;
+* context hash;
+* authentication context;
+* handshake transcript.
 
-A conceptual derivation is:
+Conceptually:
 
 ```text
 resumption_secret =
     HKDF-Expand(
         handshake_secret,
-        "GSP-RESUMPTION" || context_hash,
+        "GSP/1.1 resumption" ||
+        context_hash,
         ...
     )
 ```
 
-The exact output length is defined by the selected cryptographic profile.
-
 ---
 
-# 32. Resumption Authenticator
+# 121. Resumption Authentication
 
 A compact handshake MUST prove possession of the resumption secret.
 
@@ -770,45 +2567,60 @@ resume_authenticator =
     )
 ```
 
-The authenticator MUST include:
+The authenticator MUST bind:
 
-```text
-CACHE_ID
-cache_generation
-fresh connection nonce
-context_hash
-fresh ephemeral key material when used
-protocol version
-selected parameters
-```
-
-The exact MAC construction is defined by the selected cryptographic suite.
+* CACHE_ID;
+* cache generation;
+* context hash;
+* fresh connection state;
+* protocol version;
+* negotiated parameters;
+* fresh KEX material where used.
 
 ---
 
-# 33. Cache Lookup
+# 122. Fresh Cryptographic State
 
-When receiving a compact connection request, the responder performs:
+Every resumed connection MUST use fresh session cryptographic state.
+
+At minimum, the implementation MUST NOT reuse:
 
 ```text
-1. Parse compact reference.
-2. Locate CACHE_ID.
-3. Check generation.
-4. Check expiration.
-5. Check revocation.
-6. Check protocol compatibility.
-7. Check parameter compatibility.
-8. Validate context integrity.
-9. Validate resumption authenticator.
-10. Validate freshness/replay state.
-11. Continue handshake.
+old traffic keys
+old session nonce
+old traffic sequence state
 ```
 
-A failure MUST NOT result in partial use of the cached context.
+Where the selected profile provides PFS, a fresh X25519 ephemeral key pair MUST be generated.
 
 ---
 
-# 34. Cache Hit
+# 123. HCC Lookup
+
+On receiving a compact connection request, the Responder performs:
+
+```text
+1. Parse reference.
+2. Validate length.
+3. Locate CACHE_ID.
+4. Validate generation.
+5. Validate HCC version.
+6. Check expiration.
+7. Check revocation.
+8. Check context integrity.
+9. Check protocol compatibility.
+10. Check parameter compatibility.
+11. Validate resumption authenticator.
+12. Validate freshness.
+13. Validate replay state.
+14. Continue handshake.
+```
+
+A failed check MUST NOT cause partial acceptance of the cached context.
+
+---
+
+# 124. Cache Hit
 
 A cache hit means only:
 
@@ -824,29 +2636,27 @@ session authenticated
 resumption authorized
 ```
 
-Authentication occurs only after the cryptographic resumption proof succeeds.
+Authentication requires cryptographic proof.
 
 ---
 
-# 35. Cache Miss
+# 125. Cache Miss
 
-If the cache does not exist:
+If no valid context exists:
 
 ```text
 CACHE_MISS
 ```
 
-The connection falls back to the full handshake.
-
-The responder MAY indicate this through an error/status message or simply require a full `HELLO`.
+The connection MUST fall back to the full handshake.
 
 ---
 
-# 36. Cache Expiration
+# 126. Cache Expiration
 
 Each cache entry MUST have an expiration time.
 
-Example:
+Recommended fields:
 
 ```text
 created_at
@@ -871,75 +2681,105 @@ Expired state MUST NOT be used for resumption.
 
 ---
 
-# 37. Cache Expiration Response
-
-A compact request referencing expired state may result in:
+# 127. Cache Expiration Flow
 
 ```text
-CACHE_EXPIRED
-```
-
-The client then performs:
-
-```text
+COMPACT_HELLO
+      |
+      v
+CACHE LOOKUP
+      |
+      v
+EXPIRED
+      |
+      v
 FULL HANDSHAKE
+      |
+      v
+NEW HCC CONTEXT
 ```
-
-A new cache entry MAY be created.
 
 ---
 
-# 38. Cache Invalidation
+# 128. Cache Invalidation
 
 A cache entry MUST be invalidated when required by security policy.
 
 Examples:
 
-* credential rotation
-* peer identity change
-* protocol version incompatibility
-* cryptographic suite change
-* authentication policy change
-* explicit revocation
-* detected compromise
-* invalid generation
-* administrator invalidation
+* credential rotation;
+* peer identity change;
+* protocol incompatibility;
+* cryptographic suite change;
+* authentication policy change;
+* explicit revocation;
+* detected compromise;
+* generation mismatch;
+* administrator invalidation.
 
 ---
 
-# 39. Cache Poisoning Protection
+# 129. Cache Poisoning Protection
 
-Remote peers MUST NOT be allowed to directly insert arbitrary authenticated cache entries.
+Remote peers MUST NOT be allowed to directly insert arbitrary trusted cache entries.
 
-A cache entry MUST be created only after successful handshake establishment.
-
-The cache context MUST be integrity protected.
+An HCC entry MUST only be created after the required handshake authentication succeeds.
 
 Untrusted cache metadata MUST NOT overwrite an existing trusted entry without validation.
 
 ---
 
-# 40. Cache Storage Security
+# 130. Cache Storage
+
+HCC MAY be implemented using:
+
+* memory;
+* local files;
+* databases;
+* secure platform storage;
+* hardware-backed storage.
+
+The GSP wire protocol does not require filesystem storage.
+
+The term "cache" describes protocol state, not a required filesystem format.
+
+---
+
+# 131. Cache Secret Protection
 
 Sensitive values such as:
 
 ```text
 resumption_secret
-peer authentication state
-identity-bound metadata
+identity-bound secret state
+ticket encryption state
 ```
 
 SHOULD be protected at rest.
 
 Implementations SHOULD use platform secure storage when available.
 
-When an entry is securely invalidated, implementations SHOULD erase sensitive secret material.
+---
+
+# 132. Cache Secret Separation
+
+HCC MUST NOT store or reuse:
+
+```text
+old traffic keys
+old traffic nonces
+old X25519 ephemeral private keys
+```
+
+The cache stores state needed to establish a new session.
+
+It does not store an active session for replay.
 
 ---
 
-# 41. Cache Lifetime
+# 133. Cache Lifetime
 
-The implementation SHOULD define:
+An implementation SHOULD define:
 
 ```text
 maximum lifetime
@@ -948,41 +2788,29 @@ maximum number of entries
 maximum entry size
 ```
 
-Example policy:
+---
 
-```text
-MAX_CACHE_ENTRIES
-MAX_CACHE_SIZE
-MAX_CONTEXT_LIFETIME
-MAX_IDLE_LIFETIME
-```
+# 134. Cache DoS Protection
 
-Values are deployment-specific.
+An implementation MUST NOT allocate unlimited storage because remote peers request new sessions.
+
+Recommended protections include:
+
+* bounded cache size;
+* bounded number of entries;
+* rate limiting;
+* eviction policy;
+* authentication before expensive state creation.
 
 ---
 
-# 42. Cache DoS Protection
-
-An implementation MUST NOT allocate unlimited storage because a remote peer requests new sessions.
-
-Recommended protections:
-
-* bounded cache size
-* bounded number of entries
-* rate limiting
-* eviction policy
-* authentication before expensive state creation
-* randomized eviction where appropriate
-
----
-
-# 43. Cache Eviction
+# 135. Cache Eviction
 
 When storage limits are reached, entries MAY be evicted.
 
-Eviction MUST NOT be treated as a protocol error.
+Eviction MUST NOT be treated as a protocol failure.
 
-The next connection simply performs:
+The next connection performs:
 
 ```text
 FULL HANDSHAKE
@@ -990,58 +2818,52 @@ FULL HANDSHAKE
 
 ---
 
-# 44. Cache Enumeration
+# 136. Cache Enumeration
 
-Because `CACHE_ID` is not authentication, implementations MUST consider enumeration.
-
-`CACHE_ID` SHOULD be unpredictable enough to prevent practical enumeration.
+Because `CACHE_ID` is not secret, implementations MUST consider enumeration.
 
 A 64-bit identifier is the compact baseline.
 
-Deployments requiring stronger anti-enumeration properties SHOULD use a larger identifier or a secret-bound ticket.
+Deployments requiring stronger anti-enumeration properties SHOULD use:
+
+* larger identifiers;
+* opaque authenticated tickets;
+* encrypted tickets;
+* additional secret-bound authentication.
 
 ---
 
-# 45. Cache Tickets
+# 137. Cache Tickets
 
 An implementation MAY replace server-side cache storage with an authenticated encrypted ticket.
 
-In this model:
-
-```text
-client stores ticket
-server validates ticket
-```
-
 The ticket MUST be:
 
-* integrity protected
-* authenticated
-* bound to the intended context
-* expiration controlled
-* resistant to modification
+* integrity protected;
+* authenticated;
+* bound to the intended context;
+* expiration controlled;
+* resistant to modification.
 
-A ticket is not equivalent to a plaintext `CACHE_ID`.
-
----
-
-# 46. Stateless Resumption
-
-A responder MAY use stateless resumption.
-
-The responder stores only the secret required to validate tickets.
-
-The ticket can contain encrypted/authenticated context.
-
-The ticket MUST NOT expose sensitive information unnecessarily.
+A ticket is not equivalent to a plaintext CACHE_ID.
 
 ---
 
-# 47. Freshness
+# 138. Stateless Resumption
 
-Every compact connection MUST include fresh connection-specific material.
+A Responder MAY use stateless resumption.
 
-At minimum, the cryptographic resumption exchange MUST prevent an attacker from replaying a previous successful request as a new authenticated session.
+The Responder stores only the secret required to validate protected tickets.
+
+The ticket MAY represent the cached context.
+
+Sensitive information SHOULD be encrypted rather than exposed in the ticket.
+
+---
+
+# 139. Cache Freshness
+
+A compact connection MUST contain fresh connection-specific cryptographic state.
 
 Possible mechanisms include:
 
@@ -1053,237 +2875,191 @@ authenticated timestamp
 single-use token
 ```
 
-The selected mechanism depends on the profile.
+The selected HCC profile MUST define the exact mechanism.
 
 ---
 
-# 48. Replay Protection
+# 140. Cache Replay Protection
 
-A valid cache reference may be observed by an attacker.
+A captured cache reference MUST NOT be sufficient to replay a successful connection.
 
-Therefore:
-
-```text
-CACHE_ID alone MUST NOT authorize resumption.
-```
-
-A captured compact handshake MUST NOT be reusable to establish an equivalent authenticated session.
+A captured compact handshake MUST NOT be reusable to establish a new authenticated session.
 
 The resumption authenticator MUST bind fresh session state.
 
 ---
 
-# 49. 0-RTT
+# 141. Cache and Forward Secrecy
 
-0-RTT is optional.
+HCC MUST NOT sacrifice Forward Secrecy solely to reduce packet size.
 
-0-RTT data is potentially replayable.
-
-Applications MUST explicitly declare whether a request is replay-safe.
-
-Operations such as:
+The following is forbidden:
 
 ```text
-DELETE
-payment
-state-changing commands
-credential modification
-```
-
-SHOULD NOT be accepted through unrestricted 0-RTT.
-
----
-
-# 50. 0-RTT and HCC
-
-HCC does not automatically enable 0-RTT.
-
-The following are separate:
-
-```text
-HCC
-RESUMPTION
-0-RTT
-```
-
-A deployment may support:
-
-```text
-HCC + 1-RTT
-```
-
-without supporting:
-
-```text
-HCC + 0-RTT
-```
-
-This is the recommended default.
-
----
-
-# 51. Compact PFS
-
-The safest compact profile continues to use fresh X25519 ephemeral keys.
-
-Therefore:
-
-```text
-previous session
+Cache old X25519 private key
         |
         X
         |
-fresh session
-        |
-fresh X25519
-        |
-new traffic keys
+reuse it for future sessions
 ```
 
-HCC does not weaken forward secrecy merely to reduce bytes.
+Each new PFS-enabled connection MUST use fresh ephemeral key material.
 
 ---
 
-# 52. Why 18 Bytes Cannot Contain Everything
-
-An X25519 public key alone requires 32 bytes.
-
-A complete authenticated handshake also requires cryptographic authentication material.
-
-Therefore the following claim is invalid:
-
-```text
-"the entire secure X25519 handshake is 18 bytes"
-```
-
-The correct claim is:
-
-```text
-"the HCC compact control reference is 18 bytes."
-```
-
-This distinction is mandatory in GSP documentation.
-
----
-
-# 53. Compact Handshake Example
+# 142. HCC Compact Handshake
 
 Conceptually:
 
 ```text
-COMPACT_HELLO
+Initiator                                      Responder
 
 18-byte HCC reference
-+
-fresh nonce
-+
-fresh X25519 public key
-+
-resumption authenticator
-```
++ fresh cryptographic state
+---------------------------------------------->
 
-Responder:
+                         CACHE LOOKUP
+                         CACHE VALIDATION
+                         Verify resumption
 
-```text
-COMPACT_ACK
+                         COMPACT_ACK
+                         + fresh cryptographic state
+                         + authentication proof
+                         <----------------------
 
-18-byte HCC reference
-+
-fresh nonce
-+
-fresh X25519 public key
-+
-resumption/authentication proof
-```
+Verify Responder
 
-Both peers then derive:
+Derive fresh session keys
 
-```text
-new handshake keys
-new traffic keys
-```
+FINISH
++ Initiator authentication
++ optional DATA
+---------------------------------------------->
 
----
+                         Verify FINISH
+                         Verify Initiator
+                         Decrypt DATA
 
-# 54. Full Handshake Creates HCC
+                         FINISH_ACK
+                         <----------------------
 
-After a successful full handshake:
-
-```text
-FULL HANDSHAKE
-       |
-       v
-AUTHENTICATED
-       |
-       v
-CREATE HCC CONTEXT
-       |
-       +--> CACHE_ID
-       +--> GENERATION
-       +--> CONTEXT_HASH
-       +--> RESUMPTION_SECRET
-       +--> EXPIRATION
+                         ESTABLISHED
 ```
 
 ---
 
-# 55. HCC Update
+# 143. HCC Authentication Gate
 
-A successful resumed connection MAY refresh:
-
-```text
-last_used_at
-expiration
-generation
-resumption state
-```
-
-A new resumption secret SHOULD be derived when security policy requires it.
-
-Implementations MUST NOT indefinitely extend compromised state without reauthentication.
-
----
-
-# 56. Credential Changes
-
-When credentials change:
+The same rule used by the full handshake applies to resumption:
 
 ```text
-old cache
+CACHE HIT
     |
-    X
+    v
+CACHE VALID
     |
-invalid
+    v
+RESUMPTION AUTHENTICATION
+    |
+    v
+RESPONDER VERIFIED
+    |
+    v
+FINISH + DATA
 ```
 
-A new full authentication handshake is required.
-
-The new handshake creates a new cache context.
+A cache hit MUST NOT directly enable application DATA.
 
 ---
 
-# 57. Parameter Changes
+# 144. HCC Authentication Binding
 
-If any security-sensitive parameter changes, the old cache MUST NOT be silently reused.
+For authenticated resumption, the Responder proof MUST be bound to:
+
+```text
+CACHE_ID
+cache_generation
+context_hash
+cached peer identity
+fresh Initiator state
+fresh Responder state
+fresh X25519 keys
+protocol version
+selected parameters
+compact transcript
+```
+
+---
+
+# 145. HCC Downgrade Protection
+
+The cached context MUST bind:
+
+```text
+protocol version
+cipher suite
+KEX
+authentication mode
+compression
+security-sensitive capabilities
+```
+
+A compact connection MUST NOT silently downgrade any of these.
+
+---
+
+# 146. HCC Parameter Changes
+
+If a security-sensitive parameter changes, the old cache MUST NOT be silently reused.
 
 Examples:
 
 ```text
 cipher
 authentication mode
-key exchange
+KEX
 protocol version
 identity
 security policy
 ```
 
+The connection falls back to a full handshake.
+
 ---
 
-# 58. Application Binding
+# 147. HCC Identity Binding
 
-Applications MAY bind a cache context to an application profile.
+If the cache contains:
 
-Example:
+```text
+peer_identity
+```
+
+that identity MUST be cryptographically bound to the resumption state.
+
+The implementation MUST NOT trust a client-supplied identity string merely because its CACHE_ID matches.
+
+---
+
+# 148. HCC and GSPID
+
+GSPID identity state MAY be associated with an HCC context.
+
+However:
+
+```text
+CACHE_ID != GSPID authentication
+```
+
+GSPID MUST only consider the identity authenticated after the resumption cryptographic proof succeeds.
+
+---
+
+# 149. HCC and Application Profiles
+
+A cache MAY be bound to an application profile.
+
+Examples:
 
 ```text
 GSP Terminal
@@ -1292,15 +3068,15 @@ GSPWD
 GSPMAIL
 ```
 
-A cache created for one application profile MUST NOT automatically authorize another profile unless explicitly permitted.
+A cache created for one security-sensitive application profile MUST NOT automatically authorize another profile.
 
 ---
 
-# 59. Transport Binding
+# 150. HCC and Transport
 
 HCC SHOULD be transport-independent.
 
-A context MAY be reused across:
+A context MAY be reused between:
 
 ```text
 GSP/TCP
@@ -1308,143 +3084,13 @@ GSP/UDP
 GSP/QUIC
 ```
 
-only when the cached context explicitly permits this.
+only when the cached context explicitly permits it.
 
 Transport-specific state MUST NOT be assumed to be valid on another transport.
 
 ---
 
-# 60. Migration
-
-If GSP supports connection migration, the migration MUST NOT invalidate cryptographic session identity merely because the network path changes.
-
-However, transport-specific state MAY require renegotiation.
-
----
-
-# 61. Cache and Connection Identity
-
-The cache context MAY contain:
-
-```text
-peer_identity
-```
-
-but the peer identity MUST be cryptographically bound to the resumption state.
-
-The implementation MUST NOT simply trust a locally supplied identity string.
-
----
-
-# 62. Responder Authentication During Resumption
-
-For an authenticated profile, the responder MUST prove that it controls the state associated with the cached context.
-
-The compact responder proof MUST bind:
-
-```text
-cached identity
-context_hash
-CACHE_ID
-generation
-fresh connection state
-new key exchange
-final transcript
-```
-
----
-
-# 63. Initiator Authentication During Resumption
-
-If the original context requires Initiator authentication, the resumed handshake MUST preserve that requirement.
-
-A cache hit MUST NOT downgrade:
-
-```text
-authenticated
-```
-
-to:
-
-```text
-anonymous
-```
-
----
-
-# 64. Authentication Downgrade Protection
-
-The following transitions are prohibited unless explicitly authorized:
-
-```text
-PUBLIC_KEY -> ANONYMOUS
-PSK        -> ANONYMOUS
-AUTHENTICATED -> unauthenticated
-```
-
-The cache context MUST bind the authentication mode.
-
----
-
-# 65. Cipher Downgrade Protection
-
-A cached context MUST bind the negotiated cipher suite.
-
-An attacker MUST NOT cause:
-
-```text
-ChaCha20-Poly1305
-```
-
-to become:
-
-```text
-weaker/unauthorized cipher
-```
-
-through cache manipulation.
-
----
-
-# 66. Version Downgrade Protection
-
-The protocol version MUST be bound to the cache context.
-
-An expired or incompatible context MUST trigger a full handshake.
-
----
-
-# 67. Extension Binding
-
-Security-sensitive extensions MUST be included in:
-
-```text
-context_hash
-```
-
-and/or:
-
-```text
-transcript_hash
-```
-
-Extensions that alter authentication or key derivation MUST NOT be silently omitted during resumption.
-
----
-
-# 68. Cache Context Canonicalization
-
-The context MUST use a deterministic encoding.
-
-Equivalent contexts MUST produce the same canonical representation.
-
-Different security-sensitive contexts MUST NOT produce the same representation intentionally.
-
-Canonicalization MUST be specified by the selected GSP encoding profile.
-
----
-
-# 69. Cache Corruption
+# 151. HCC Corruption
 
 If local cache data is corrupted:
 
@@ -1458,21 +3104,11 @@ It MUST NOT attempt to guess or repair security-sensitive values.
 
 ---
 
-# 70. Clock Handling
+# 152. Cache Revocation
 
-Expiration SHOULD use a monotonic clock for local lifetime calculations when available.
+A Responder MAY revoke a cache context.
 
-Wall-clock timestamps MAY be stored for diagnostics.
-
-Clock rollback MUST NOT cause expired credentials to become valid again.
-
----
-
-# 71. Cache Revocation
-
-A responder MAY revoke a cache context.
-
-Revocation may be represented by:
+Possible mechanisms include:
 
 ```text
 generation change
@@ -1481,15 +3117,11 @@ ticket key rotation
 explicit invalidation
 ```
 
-The selected mechanism is deployment-specific.
-
 ---
 
-# 72. Key Rotation
+# 153. Cache Key Rotation
 
-Resumption keys SHOULD be rotated periodically.
-
-For stateless tickets, the server MAY maintain:
+For stateless tickets, the Responder MAY maintain:
 
 ```text
 current_ticket_key
@@ -1500,145 +3132,51 @@ The previous key may remain valid for a limited overlap period.
 
 ---
 
-# 73. Cache Secret Separation
+# 154. Cache Refresh
 
-The following MUST remain logically separated:
+A successful resumed connection MAY refresh:
 
 ```text
-traffic keys
-handshake keys
-resumption secret
-ticket encryption keys
-cache storage encryption keys
+last_used_at
+expiration
+resumption state
 ```
 
-One secret MUST NOT be reused for unrelated purposes.
+Refreshing MUST NOT bypass authentication.
 
-Domain-separated HKDF labels SHOULD be used.
+An implementation MUST NOT indefinitely extend compromised state without appropriate reauthentication.
 
 ---
 
-# 74. Example Key Schedule
+# 155. Credential Rotation
 
-Conceptually:
+When authentication credentials change:
 
 ```text
-X25519
-   |
-   v
-shared_secret
-   |
-   v
-HKDF-Extract
-   |
-   +--> handshake_secret
-   |
-   +--> traffic_secret
-   |
-   +--> resumption_secret
+old HCC
+    |
+    X
+    |
+invalid
 ```
 
-Each derived value MUST use a distinct context/label.
+A new authentication handshake is required.
+
+A new HCC context MAY then be created.
 
 ---
 
-# 75. Resumption Key Schedule
+# 156. Clock Handling
 
-A resumed connection uses:
+Expiration SHOULD use a monotonic clock for local lifetime calculations when available.
 
-```text
-resumption_secret
-+
-fresh connection state
-+
-fresh X25519 shared secret when enabled
-+
-context_hash
-+
-new transcript
-```
+Wall-clock timestamps MAY be stored for diagnostics.
 
-to derive fresh session keys.
-
-The previous traffic keys are never restored.
+Clock rollback MUST NOT cause expired credentials to become valid again.
 
 ---
 
-# 76. Failure Handling
-
-Defined compact failure conditions include:
-
-```text
-CACHE_MISS
-CACHE_EXPIRED
-CACHE_INVALID
-CACHE_REVOKED
-CACHE_GENERATION_MISMATCH
-CACHE_CONTEXT_MISMATCH
-RESUMPTION_AUTH_FAILED
-REPLAY_DETECTED
-PARAMETER_MISMATCH
-VERSION_MISMATCH
-```
-
----
-
-# 77. Fallback Rule
-
-For recoverable cache failures:
-
-```text
-COMPACT
-   |
-   +--> failure
-           |
-           v
-      FULL HANDSHAKE
-```
-
-The responder MUST NOT silently accept a partially valid cache.
-
----
-
-# 78. Fatal Authentication Failure
-
-If the cryptographic authenticator fails:
-
-```text
-RESUMPTION_AUTH_FAILED
-```
-
-the peer MUST NOT establish an authenticated session using that cache context.
-
-Implementations MAY terminate immediately rather than fall back automatically when policy requires it.
-
-This helps reduce online probing.
-
----
-
-# 79. Anti-Probing Policy
-
-Implementations MAY make cache failures intentionally indistinguishable.
-
-For example:
-
-```text
-CACHE_MISS
-CACHE_EXPIRED
-CACHE_REVOKED
-```
-
-may all produce:
-
-```text
-RESUME_REJECTED
-```
-
-This prevents information leakage about cache state.
-
----
-
-# 80. Compact State Machine
+# 157. HCC State Machine
 
 ```text
               +----------------+
@@ -1655,801 +3193,161 @@ This prevents information leakage about cache state.
                   v         v
               FULL       VALIDATE
            HANDSHAKE       |
-                  |        v
+                  |         v
                   |    AUTHENTICATE
-                  |        |
-                  |    +---+---+
-                  |    |       |
-                  |  fail     success
-                  |    |       |
-                  |    v       v
-                  |  FULL    RESUME
-                  |            |
-                  +-----+------+
-                        |
-                        v
-                  ESTABLISHED
+                  |         |
+                  |     +---+---+
+                  |     |       |
+                  |   fail     success
+                  |     |       |
+                  |     v       v
+                  |   FULL    RESUME
+                  |             |
+                  +------+------+ 
+                         |
+                         v
+                    ESTABLISHED
 ```
 
 ---
 
-# 81. Compact Handshake State
-
-A compact connection SHOULD use states equivalent to:
+# 158. HCC State Rules
 
 ```text
 START
-CACHE_REFERENCED
-CACHE_VALIDATED
-KEY_EXCHANGE
-RESUMPTION_AUTHENTICATED
-FINISH_VALIDATED
-ESTABLISHED
-```
+ -> CACHE_LOOKUP
 
----
-
-# 82. State Transition Rules
-
-```text
-START
- -> CACHE_REFERENCED
-
-CACHE_REFERENCED
+CACHE_LOOKUP
  -> CACHE_VALIDATED
  -> FULL_HANDSHAKE
 
 CACHE_VALIDATED
- -> KEY_EXCHANGE
+ -> RESUMPTION_AUTHENTICATION
  -> FULL_HANDSHAKE
 
-KEY_EXCHANGE
- -> RESUMPTION_AUTHENTICATED
+RESUMPTION_AUTHENTICATION
+ -> RESPONDER_AUTHENTICATED
  -> FAILED
 
-RESUMPTION_AUTHENTICATED
- -> FINISH_VALIDATED
+RESPONDER_AUTHENTICATED
+ -> FINISH
  -> FAILED
 
-FINISH_VALIDATED
+FINISH
  -> ESTABLISHED
+ -> FAILED
 ```
 
 ---
 
-# 83. Cache Creation Rules
+# 159. HCC Full-Connection Creation
 
-A new HCC entry MUST NOT be created merely because a `HELLO` was received.
-
-Creation requires successful establishment of the required authenticated handshake.
-
----
-
-# 84. Cache Refresh Rules
-
-A cache MAY be refreshed after a successful authenticated session.
-
-Refreshing MUST NOT bypass authentication.
-
----
-
-# 85. Cache Size
-
-The cache context SHOULD be significantly larger than the compact reference.
-
-This is intentional.
-
-Example:
+After a successful full handshake:
 
 ```text
-CACHE_ID               8 bytes
-generation             8 bytes
-protocol parameters    variable
-identity               variable
-context_hash           32 bytes
-resumption_secret      32 bytes
-timestamps             variable
-```
-
-The cache exists precisely so this information does not need to cross the wire repeatedly.
-
----
-
-# 86. What Is Actually Saved
-
-HCC may save information such as:
-
-```text
-"we already negotiated ChaCha20-Poly1305"
-"we already negotiated X25519"
-"this peer uses authentication profile X"
-"these extensions were accepted"
-"this identity was authenticated"
-"this is context generation 4"
-"this resumption secret belongs to this context"
-```
-
-It does NOT save:
-
-```text
-old traffic key for reuse
-old X25519 ephemeral private key
-old session nonce for reuse
+FULL HANDSHAKE
+       |
+       v
+AUTHENTICATED
+       |
+       v
+CREATE HCC
+       |
+       +--> CACHE_ID
+       +--> GENERATION
+       +--> CONTEXT_HASH
+       +--> RESUMPTION_SECRET
+       +--> EXPIRATION
 ```
 
 ---
 
-# 87. First Connection Cost
+# 160. HCC Warm Connection
 
-The first connection intentionally carries more information.
-
-Conceptually:
+After the first connection:
 
 ```text
 FIRST CONNECTION
-
-HELLO
-  + capabilities
-  + cipher list
-  + key exchange
-  + authentication
-  + extensions
-  + identity
-  + cryptographic material
-
-            ↓
-
+        |
+        v
 HCC CREATED
-```
-
-This cost is paid once per cache lifetime.
-
----
-
-# 88. Subsequent Connection
-
-```text
-SUBSEQUENT CONNECTION
-
-18-byte HCC reference
-        +
-fresh cryptographic material
-        +
-authentication
-```
-
-This significantly reduces repeated metadata.
-
----
-
-# 89. Expiration Behavior
-
-Example:
-
-```text
-Connection #1
-    |
-    v
-Create cache
-    |
-    v
-Connection #2
-    |
-    v
-CACHE HIT
-    |
-    v
-Compact handshake
-    |
-    v
-Connection #N
-    |
-    v
-CACHE EXPIRED
-    |
-    v
-Full handshake
-    |
-    v
-New cache
-```
-
----
-
-# 90. Performance Model
-
-HCC primarily reduces:
-
-```text
-bytes
-serialization
-negotiation repetition
-metadata transmission
-```
-
-It does not inherently reduce:
-
-```text
-network RTT
-speed of light
-transport latency
-```
-
-A 1-RTT compact handshake remains approximately 1 RTT.
-
----
-
-# 91. Latency Goal
-
-For repeated connections, GSP SHOULD target:
-
-```text
-1 RTT
-```
-
-for the normal compact authenticated handshake.
-
-0-RTT MAY be supported separately.
-
----
-
-# 92. Bandwidth Goal
-
-The compact reference targets:
-
-```text
-18 bytes
-```
-
-for the HCC control structure.
-
-The complete cryptographic handshake SHOULD be optimized toward:
-
-```text
-~80–120 bytes
-```
-
-where the selected authentication and key-exchange profile permits it.
-
----
-
-# 93. Conservative Target
-
-Implementations that cannot safely fit the aggressive target SHOULD prioritize security over size.
-
-A handshake of:
-
-```text
-120–180 bytes
-```
-
-is preferable to removing required cryptographic protections.
-
----
-
-# 94. No Security-by-Compression
-
-HCC MUST NOT rely on compression to make security material fit into 18 bytes.
-
-The 18-byte target comes from referencing already known state.
-
-Compression MAY be used separately.
-
----
-
-# 95. No Secret in CACHE_ID
-
-The design MUST NOT assume:
-
-```text
-CACHE_ID = secret
-```
-
-The cache ID is an identifier.
-
-Security comes from:
-
-```text
-resumption_secret
-authentication
-freshness
-transcript binding
-```
-
----
-
-# 96. Cache Reference Privacy
-
-A CACHE_ID may reveal that a cache context exists if exposed directly.
-
-Implementations concerned about metadata privacy MAY use encrypted or opaque tickets instead.
-
----
-
-# 97. Application DATA After Resumption
-
-Once:
-
-```text
-responder authenticated
-initiator authenticated when required
-FINISH validated
-```
-
-the session becomes:
-
-```text
-ESTABLISHED
-```
-
-Application DATA may then flow normally.
-
----
-
-# 98. FINISH and DATA
-
-The implementation MAY optimize the first application DATA transmission when all authentication requirements have already been satisfied.
-
-However:
-
-```text
-NO VERIFIED RESPONDER
         |
-        X
+        v
+SECOND CONNECTION
         |
-APPLICATION DATA
-```
-
-remains mandatory.
-
----
-
-# 99. Anonymous Resumption
-
-Anonymous resumption MAY be implemented only when explicitly defined by an application profile.
-
-A cache context MUST NOT accidentally turn an anonymous session into an authenticated identity.
-
----
-
-# 100. Identity-Bound Resumption
-
-For authenticated peers:
-
-```text
-cached identity
-      |
-      v
-context_hash
-      |
-      v
-resumption_secret
-      |
-      v
-new session
-```
-
-The new session MUST remain bound to the same authenticated identity unless a fresh authentication explicitly changes it.
-
----
-
-# 101. GSPID Compatibility
-
-If GSPID is used, its identity state MAY be stored in HCC.
-
-However, GSPID MUST NOT treat:
-
-```text
-CACHE_ID
-```
-
-as proof of identity.
-
-The identity remains valid only when the resumption cryptographic proof validates the identity-bound context.
-
----
-
-# 102. Security Event Logging
-
-Implementations SHOULD log:
-
-```text
-cache created
-cache hit
-cache miss
-cache expired
-cache revoked
-cache authentication failure
-replay detected
-cache invalidated
-```
-
-Sensitive secret material MUST NOT be logged.
-
----
-
-# 103. Diagnostics
-
-Debug logs SHOULD identify:
-
-```text
-CACHE_ID
-generation
-result
-```
-
-but SHOULD avoid logging:
-
-```text
-resumption_secret
-private keys
-session keys
-authentication secrets
-```
-
----
-
-# 104. Interoperability
-
-Two implementations MUST agree on:
-
-```text
-protocol version
-encoding
-cryptographic profile
-HCC profile
-cache representation
-authentication profile
-```
-
-An implementation MUST NOT assume that an arbitrary cache created by another implementation is compatible.
-
----
-
-# 105. HCC Profile Identifier
-
-A future GSP profile MAY define:
-
-```text
-HCC profile ID
-```
-
-to allow different cache formats.
-
-The profile ID MUST be included in the context binding.
-
----
-
-# 106. Cache Format Version
-
-Cache storage MUST have a format version.
-
-Example:
-
-```text
-hcc_version = 1
-```
-
-Unknown cache formats MUST be rejected safely.
-
----
-
-# 107. Local Cache Isolation
-
-Applications SHOULD NOT share HCC secrets unless explicitly authorized.
-
-A cache created for one GSP application SHOULD be isolated from unrelated applications.
-
----
-
-# 108. Multi-Device Operation
-
-A cache context is normally device-specific.
-
-Implementations MUST NOT copy resumption secrets between devices unless the deployment explicitly supports secure synchronization.
-
----
-
-# 109. Backup
-
-HCC secrets SHOULD NOT be included in ordinary backups unless encrypted and protected appropriately.
-
-A copied cache secret may permit resumption until expiration or revocation.
-
----
-
-# 110. Secure Deletion
-
-When a cache is invalidated, implementations SHOULD erase:
-
-```text
-resumption_secret
-ticket keys
-identity-bound secret state
-```
-
-as securely as the platform permits.
-
----
-
-# 111. HCC Security Invariants
-
-The following are mandatory:
-
-```text
-CACHE_ID != AUTHENTICATION
-
-CACHE HIT != AUTHENTICATION
-
-EXPIRED CACHE != VALID CACHE
-
-INVALID CACHE -> FULL HANDSHAKE
-
-CACHE CONTEXT MUST BE INTEGRITY PROTECTED
-
-RESUMPTION SECRET MUST BE PROTECTED
-
-TRAFFIC KEYS MUST NOT BE REUSED
-
-EPHEMERAL X25519 KEYS MUST NOT BE REUSED
-
-RESUMPTION MUST USE FRESH SESSION STATE
-
-FINAL TRANSCRIPT MUST INCLUDE AUTHENTICATED HANDSHAKE STATE
-
-NO VERIFIED RESPONDER -> NO AUTHENTICATED APPLICATION DATA
-```
-
----
-
-# 112. Full Handshake Diagram
-
-```text
-Initiator                                      Responder
-
-HELLO
-  |
-  |-------------------------------------------->
-  |
-  |       HELLO_ACK
-  |<--------------------------------------------|
-  |
-  | verify responder authentication
-  |
-  | FINISH
-  |-------------------------------------------->
-  |
-  |       FINISH_ACK
-  |<--------------------------------------------|
-  |
-  v
-ESTABLISHED
-
-              |
-              v
-        CREATE HCC
-```
-
----
-
-# 113. Compact Handshake Diagram
-
-```text
-Initiator                                      Responder
-
-18-byte HCC reference
-+ fresh crypto
-  |
-  |-------------------------------------------->
-  |
-  |       COMPACT_ACK
-  |       + fresh crypto
-  |<--------------------------------------------|
-  |
-  | verify resumption authentication
-  |
-  | FINISH
-  |-------------------------------------------->
-  |
-  |       FINISH_ACK
-  |<--------------------------------------------|
-  |
-  v
+        v
+18-BYTE REFERENCE
+        |
+        v
+COMPACT CRYPTOGRAPHIC EXCHANGE
+        |
+        v
+FRESH SESSION KEYS
+        |
+        v
 ESTABLISHED
 ```
 
 ---
 
-# 114. Cache Failure Diagram
+# 161. HCC Cold Connection
+
+If no valid cache exists:
 
 ```text
-COMPACT_HELLO
-      |
-      v
-CACHE LOOKUP
-      |
-      +---- HIT ----> VALIDATE
-      |                  |
-      |                  +---- SUCCESS ---> RESUME
-      |                  |
-      |                  +---- FAILURE ---> FULL
-      |
-      +---- MISS --------------------------> FULL
-      |
-      +---- EXPIRED -----------------------> FULL
-      |
-      +---- REVOKED -----------------------> FULL
+CACHE MISS
+     |
+     v
+FULL HELLO
+     |
+     v
+FULL HELLO_ACK
+     |
+     v
+FULL AUTHENTICATION
+     |
+     v
+FULL HANDSHAKE
+     |
+     v
+NEW HCC
 ```
 
 ---
 
-# 115. 18-Byte Reference Diagram
+# 162. HCC Expiration Flow
 
 ```text
-+--------+--------+----------------+------------------+
-| TYPE   | FLAGS  | CACHE_ID       | GENERATION       |
-| 1      | 1      | 8              | 8                |
-+--------+--------+----------------+------------------+
-
-                    18 BYTES
-```
-
----
-
-# 116. Example
-
-Example conceptual cache:
-
-```text
-CACHE_ID:
-    0xA71C92E41F0082B3
-
-GENERATION:
-    0x0000000000000004
-
-PROTOCOL:
-    GSP/1.1
-
-CIPHER:
-    ChaCha20-Poly1305
-
-KEX:
-    X25519
-
-AUTH:
-    PUBLIC_KEY
-
-CONTEXT_HASH:
-    SHA-256(...)
-
-RESUMPTION_SECRET:
-    secret
-
-EXPIRES:
-    timestamp
-```
-
-The wire does not need to retransmit all of this.
-
----
-
-# 117. What the Responder Actually Checks
-
-On compact resumption:
-
-```text
-Does CACHE_ID exist?
-        |
-        v
-Is generation correct?
-        |
-        v
-Is it expired?
-        |
-        v
-Is it revoked?
-        |
-        v
-Is context intact?
-        |
-        v
-Does context match?
-        |
-        v
-Does authenticator verify?
-        |
-        v
-Is the session fresh?
-        |
-        v
-Is the new key exchange valid?
-        |
-        v
-ESTABLISH
-```
-
----
-
-# 118. What the Attacker Cannot Do
-
-Knowing:
-
-```text
-CACHE_ID
-generation
-old packets
-```
-
-must not be sufficient to:
-
-```text
-authenticate
-derive traffic keys
-impersonate responder
-impersonate initiator
-reuse old traffic keys
-```
-
----
-
-# 119. What Happens When the Cache Expires
-
-```text
-OLD CACHE
+CACHE VALID
     |
-    X
+    v
+COMPACT RESUMPTION
     |
-EXPIRED
+    v
+SESSION
+
+        later
+
+CACHE EXPIRES
+    |
+    v
+COMPACT REQUEST
+    |
+    v
+CACHE_EXPIRED
     |
     v
 FULL HANDSHAKE
     |
     v
-NEW RESUMPTION SECRET
-    |
-    v
-NEW CACHE GENERATION
+NEW CACHE
 ```
 
 ---
 
-# 120. Implementation Requirements
+# 163. HCC Negative Security Cases
 
-A compliant implementation SHOULD implement:
-
-```text
-[ ] Full handshake
-[ ] X25519
-[ ] ChaCha20-Poly1305
-[ ] HKDF-SHA-256
-[ ] SHA-256 transcript
-[ ] Responder authentication
-[ ] Fresh traffic keys
-[ ] HCC
-[ ] CACHE_ID
-[ ] Cache generation
-[ ] Cache expiration
-[ ] Cache invalidation
-[ ] Resumption authentication
-[ ] Replay protection
-[ ] Full-handshake fallback
-```
-
-Optional:
-
-```text
-[ ] 0-RTT
-[ ] Stateless tickets
-[ ] Larger CACHE_ID
-[ ] Secure hardware storage
-[ ] Application-bound caches
-```
-
----
-
-# 121. Negative Security Tests
-
-An implementation MUST test at least:
+The following MUST fail safely:
 
 ```text
 expired CACHE_ID
@@ -2464,6 +3362,7 @@ reused X25519 key
 wrong peer identity
 wrong protocol version
 wrong cipher
+wrong KEX
 wrong authentication mode
 downgrade attempt
 corrupted cache
@@ -2471,42 +3370,605 @@ unknown cache format
 revoked cache
 ```
 
-Every test MUST result in rejection or safe full-handshake fallback.
+---
+
+# 164. Cross-Protocol Protection
+
+All cryptographic derivations MUST use GSP-specific domain labels.
+
+Examples:
+
+```text
+"GSP/1.1 handshake"
+"GSP/1.1 initiator traffic"
+"GSP/1.1 responder traffic"
+"GSP/1.1 initiator finished"
+"GSP/1.1 responder finished"
+"GSP/1.1 resumption"
+"GSP/1.1 HCC"
+```
 
 ---
 
-# 122. Recommended Default
+# 165. Memory Safety
 
-The recommended GSP 1.1 deployment is:
+Implementations MUST validate:
+
+* lengths;
+* integer overflow;
+* buffer boundaries;
+* extension sizes;
+* key sizes;
+* signature sizes;
+* frame sizes.
+
+Network-controlled lengths MUST never result in uncontrolled allocation.
+
+---
+
+# 166. Constant-Time Operations
+
+Security-sensitive operations SHOULD use constant-time implementations where applicable.
+
+This includes:
+
+* MAC comparison;
+* Finished verification;
+* secret comparison;
+* cryptographic primitive operations.
+
+---
+
+# 167. Logging
+
+Debug logs MAY contain:
+
+* GSP version;
+* cipher;
+* KEX;
+* authentication mode;
+* compression;
+* CID;
+* SID;
+* handshake state;
+* HCC status;
+* cache generation;
+* error code;
+* timing.
+
+Logs MUST NOT contain:
+
+* private keys;
+* shared secrets;
+* PSKs;
+* traffic keys;
+* resumption secrets;
+* authentication secrets.
+
+---
+
+# 168. Application API
+
+After establishment, an implementation MAY expose:
 
 ```text
-FULL HANDSHAKE
-    |
-    +--> create HCC
-    |
-    v
-COMPACT 1-RTT RESUMPTION
-    |
-    +--> fresh X25519
-    +--> fresh traffic keys
-    +--> authenticated resumption
-    |
-    v
+session.id
+session.version
+session.cipher
+session.kex
+session.authentication
+session.compression
+session.peer_identity
+session.max_frame_size
+session.max_streams
+session.resumed
+session.hcc_generation
+```
+
+Raw cryptographic secrets MUST NOT be exposed through the normal API.
+
+---
+
+# 169. Handshake Completion Event
+
+A GSP implementation MAY provide:
+
+```text
+onHandshakeComplete(session)
+```
+
+This event MUST NOT occur until all required cryptographic verification succeeds.
+
+---
+
+# 170. Handshake Failure Event
+
+An implementation MAY provide:
+
+```text
+onHandshakeFailure(error)
+```
+
+The exposed error SHOULD avoid leaking sensitive cryptographic information.
+
+---
+
+# 171. Complete Full Handshake
+
+```text
+INITIATOR                                      RESPONDER
+
+Generate random
+Generate X25519 key pair
+
+HELLO
++ version
++ capabilities
++ cipher suites
++ KEX suites
++ authentication
++ compression
++ random
++ X25519 public key
+---------------------------------------------->
+
+                         Validate HELLO
+                         Select parameters
+                         Generate random
+                         Generate X25519 pair
+
+                         Build responder
+                         pre-auth context
+
+                         Generate responder
+                         authentication proof
+
+HELLO_ACK
++ selected parameters
++ responder random
++ responder X25519 public key
++ responder identity
++ responder authentication proof
+<----------------------------------------------
+
+Verify responder authentication
+        |
+        +---- FAIL ---> FAILED
+        |
+        v
+
+Calculate X25519
+Derive handshake state
+Derive traffic keys
+
+FINISH
++ Initiator authentication
++ Finished
++ optional encrypted DATA
+---------------------------------------------->
+
+                         Verify Initiator
+                         Verify transcript
+                         Verify Finished
+                         Authenticate DATA
+                         Decrypt DATA
+                         Deliver DATA
+
+FINISH_ACK
+<----------------------------------------------
+
+Verify FINISH_ACK
+
+             ESTABLISHED
+```
+
+---
+
+# 172. Complete Compact Handshake
+
+```text
+INITIATOR                                      RESPONDER
+
+18-byte HCC reference
++ fresh random
++ fresh X25519 public key
++ resumption authenticator
+---------------------------------------------->
+
+                         Lookup HCC
+                         Validate generation
+                         Validate expiration
+                         Validate context
+                         Validate authenticator
+
+                         Generate fresh random
+                         Generate fresh X25519 pair
+
+COMPACT_ACK
++ HCC reference
++ fresh random
++ fresh X25519 public key
++ responder authentication
+<----------------------------------------------
+
+Verify Responder
+
+Calculate fresh X25519
+Derive fresh session keys
+Construct transcript
+
+FINISH
++ Initiator authentication
++ Finished
++ optional encrypted DATA
+---------------------------------------------->
+
+                         Verify Initiator
+                         Verify Finished
+                         Verify transcript
+                         Decrypt DATA
+
+FINISH_ACK
+<----------------------------------------------
+
+Verify FINISH_ACK
+
+             ESTABLISHED
+```
+
+---
+
+# 173. Complete Cache Failure Flow
+
+```text
+COMPACT_HELLO
+      |
+      v
+CACHE LOOKUP
+      |
+      +---- MISS --------------------+
+      |                              |
+      +---- EXPIRED -----------------+
+      |                              |
+      +---- REVOKED -----------------+
+      |                              |
+      +---- INVALID -----------------+
+      |                              |
+      +---- GENERATION MISMATCH -----+
+      |                              |
+      +---- CONTEXT MISMATCH --------+
+      |                              |
+      v                              v
+CACHE VALID                    FULL HANDSHAKE
+      |
+      v
+RESUMPTION AUTH
+      |
+      +---- FAIL ---> REJECT
+      |
+      v
+FRESH KEY EXCHANGE
+      |
+      v
+FINISH
+      |
+      v
 ESTABLISHED
 ```
 
-0-RTT SHOULD remain disabled unless the application explicitly needs it.
+---
+
+# 174. Security Invariants
+
+A compliant implementation MUST preserve all of the following:
+
+1. No authenticated application DATA before required Responder authentication.
+
+2. No application DATA is delivered before required Initiator authentication.
+
+3. No `(Key, Nonce)` pair is ever reused.
+
+4. Sequence numbers never wrap under the same key.
+
+5. Sequence numbers are independent per direction.
+
+6. Sequence reset occurs only after a key change.
+
+7. All multi-byte integers use Big-Endian.
+
+8. Wire structures contain no compiler-generated padding.
+
+9. Variable-length fields have explicit lengths.
+
+10. Cryptographic fields have fixed lengths.
+
+11. Transcript encoding is canonical.
+
+12. Negotiated parameters are transcript-bound.
+
+13. Ephemeral X25519 keys are fresh for PFS-enabled handshakes.
+
+14. Private keys are never transmitted.
+
+15. Raw shared secrets are never transmitted.
+
+16. Traffic keys are separated by direction.
+
+17. Handshake keys and traffic keys are separated.
+
+18. Authentication is bound to the current session.
+
+19. Unknown mandatory extensions cause failure.
+
+20. Failed handshakes cannot transition to `ESTABLISHED`.
+
+21. Nonces remain unique for every AEAD key.
+
+22. Sequence-number exhaustion cannot result in wraparound.
+
+23. Cryptographic primitives use established algorithms.
+
+24. Remote lengths cannot cause unbounded allocation.
+
+25. Downgrade attempts are detected through transcript binding.
+
+26. `CACHE_ID` is never treated as authentication.
+
+27. Cache expiration prevents resumption.
+
+28. Invalid cache state cannot be partially accepted.
+
+29. Resumption creates fresh traffic keys.
+
+30. HCC MUST NOT require reuse of ephemeral X25519 private keys.
+
+31. Resumption authentication is bound to the cached context.
+
+32. Cache state is protected against unauthorized modification.
+
+33. A replayed compact handshake cannot establish a new equivalent session.
 
 ---
 
-# 123. Canonical Full Flow
+# 175. Recommended Cryptographic Profile
+
+```text
+Protocol:
+    GSP/1.1
+
+Key Exchange:
+    X25519
+
+Hash:
+    SHA-256
+
+KDF:
+    HKDF-SHA-256
+
+AEAD:
+    ChaCha20-Poly1305
+
+Nonce:
+    Per-direction static IV + sequence number
+
+Sequence:
+    uint64
+
+Integer Encoding:
+    Big-Endian
+
+Authentication:
+    Public Key / PSK / Certificate / Anonymous
+
+Compression:
+    None / LZ4
+
+Forward Secrecy:
+    Enabled through ephemeral X25519
+
+Handshake:
+    Optimized 1-RTT
+
+Key Update:
+    Supported
+
+Session Resumption:
+    Optional
+
+HCC:
+    Optional
+
+0-RTT:
+    Optional and restricted
+```
+
+---
+
+# 176. Implementation Checklist
+
+A GSP implementation SHOULD implement and test:
+
+```text
+[ ] Version negotiation
+[ ] Cipher negotiation
+[ ] KEX negotiation
+[ ] Authentication negotiation
+[ ] Capability negotiation
+[ ] Canonical serialization
+[ ] Big-Endian integer encoding
+[ ] Explicit field sizes
+[ ] X25519 ephemeral KEX
+[ ] HKDF-SHA-256
+[ ] SHA-256 transcript
+[ ] Responder authentication in HELLO_ACK
+[ ] Responder authentication gate
+[ ] Directional key derivation
+[ ] Finished verification
+[ ] AEAD encryption
+[ ] Unique nonce generation
+[ ] uint64 sequence numbers
+[ ] Sequence exhaustion handling
+[ ] Key update
+[ ] Replay protection
+[ ] Downgrade protection
+[ ] Handshake timeout
+[ ] Duplicate handling
+[ ] Retry support
+[ ] Maximum handshake size
+[ ] Extension validation
+[ ] Error handling
+[ ] Secret erasure
+[ ] Fuzz testing
+
+[ ] HCC
+[ ] CACHE_ID
+[ ] Cache generation
+[ ] Cache expiration
+[ ] Cache invalidation
+[ ] Context hash
+[ ] Resumption secret
+[ ] Resumption authentication
+[ ] Cache poisoning protection
+[ ] Cache replay protection
+[ ] Full-handshake fallback
+[ ] Fresh X25519 on resumption
+```
+
+---
+
+# 177. Required Negative Tests
+
+Implementations SHOULD test:
+
+```text
+Invalid version
+Unsupported version
+Invalid cipher
+Unsupported cipher
+Invalid KEX
+Invalid X25519 key
+Modified HELLO
+Modified HELLO_ACK
+Modified random
+Modified public key
+Modified responder authentication
+Invalid signature
+Invalid PSK MAC
+Modified transcript
+Invalid FINISH
+Invalid FINISH_ACK
+Wrong sequence number
+Duplicate sequence number
+Sequence wrap
+Nonce reuse
+Unknown mandatory extension
+Malformed extension
+Oversized message
+Integer overflow
+Truncated message
+Replay
+Downgrade attempt
+Timeout
+Retry token expiration
+
+Expired cache
+Invalid cache
+Wrong cache generation
+Wrong context hash
+Modified cache
+Invalid resumption authenticator
+Replayed resumption
+Revoked cache
+Cache poisoning attempt
+Reuse of old ephemeral X25519 key
+Resumption parameter downgrade
+Identity substitution
+```
+
+---
+
+# 178. Fuzzing
+
+The handshake parser SHOULD be fuzz-tested with:
+
+* random message types;
+* random lengths;
+* truncated packets;
+* oversized packets;
+* invalid flags;
+* invalid extensions;
+* duplicate fields;
+* invalid sequence numbers;
+* invalid cryptographic identifiers;
+* malformed public keys;
+* malformed signatures;
+* malformed cache references;
+* corrupted cache state.
+
+The implementation MUST remain memory-safe.
+
+---
+
+# 179. Test Vectors
+
+The GSP specification SHOULD eventually publish deterministic test vectors containing:
+
+```text
+Initiator random
+Responder random
+Initiator private key
+Initiator public key
+Responder private key
+Responder public key
+Shared secret
+Canonical HELLO
+Canonical HELLO_ACK
+Responder pre-auth transcript
+Responder authentication proof
+Final transcript
+Transcript hash
+Handshake secret
+Traffic keys
+Finished values
+HCC context hash
+Resumption secret
+Compact HCC reference
+Resumption authenticator
+```
+
+These vectors are for interoperability testing only.
+
+---
+
+# 180. Security Review Requirements
+
+Before production deployment, the GSP handshake SHOULD undergo:
+
+* Cryptographic review
+* Protocol review
+* Implementation audit
+* Fuzz testing
+* Interoperability testing
+* MITM testing
+* Replay testing
+* Downgrade testing
+* Nonce-reuse testing
+* DoS testing
+* Resumption testing
+* Cache poisoning testing
+* Cache expiration testing
+* 0-RTT replay testing if 0-RTT is enabled
+
+---
+
+# 181. Canonical Cold Flow
 
 ```text
 HELLO
     ↓
 HELLO_ACK
     ↓
-verify responder
+Verify Responder
     ↓
 X25519
     ↓
@@ -2521,24 +3983,16 @@ ESTABLISHED
 CREATE HCC
 ```
 
----
-
-# 124. Canonical Compact Flow
+For authenticated 1-RTT:
 
 ```text
-18-byte HCC REFERENCE
+HELLO
     ↓
-CACHE LOOKUP
+HELLO_ACK + Responder Authentication
     ↓
-CACHE VALIDATION
+VERIFY RESPONDER
     ↓
-fresh X25519
-    ↓
-resumption authentication
-    ↓
-HKDF
-    ↓
-FINISH
+FINISH + optional DATA
     ↓
 FINISH_ACK
     ↓
@@ -2547,112 +4001,348 @@ ESTABLISHED
 
 ---
 
-# 125. Final GSP HCC Contract
-
-GSP HCC is a mechanism for replacing repeated handshake metadata with a compact reference to previously validated state.
-
-The system MUST satisfy:
+# 182. Canonical Warm Flow
 
 ```text
-FIRST CONNECTION MAY BE LARGE
-
-SUBSEQUENT CONNECTIONS MAY BE COMPACT
-
-CACHE_ID IS NOT AUTHENTICATION
-
-CACHE HIT IS NOT AUTHENTICATION
-
-CACHE MUST EXPIRE
-
-CACHE MUST BE INVALIDATABLE
-
-CACHE MUST BE INTEGRITY PROTECTED
-
-CACHE SECRETS MUST BE PROTECTED
-
-INVALID CACHE MUST FALL BACK SAFELY
-
-RESUMPTION MUST USE FRESH SESSION STATE
-
-TRAFFIC KEYS MUST NEVER BE REUSED
-
-X25519 EPHEMERAL KEYS MUST NOT BE REUSED
-
-RESPONDER AUTHENTICATION MUST PRECEDE AUTHENTICATED APPLICATION DATA
-
-FINAL TRANSCRIPT MUST BIND THE HANDSHAKE
-
-18 BYTES REPRESENT THE COMPACT HCC CONTROL REFERENCE
-
-18 BYTES DO NOT REPRESENT THE COMPLETE CRYPTOGRAPHIC HANDSHAKE
+18-BYTE HCC REFERENCE
+    ↓
+CACHE LOOKUP
+    ↓
+CACHE VALIDATION
+    ↓
+FRESH X25519
+    ↓
+RESUMPTION AUTHENTICATION
+    ↓
+VERIFY RESPONDER
+    ↓
+HKDF
+    ↓
+FINISH + optional DATA
+    ↓
+FINISH_ACK
+    ↓
+ESTABLISHED
 ```
 
 ---
 
-# 126. Final Size Target
+# 183. Final Security Contract
 
-The GSP 1.1 HCC design therefore targets:
+The GSP handshake MUST guarantee:
 
 ```text
-COLD CONNECTION
-    Full handshake
-    Larger initial cost
-    Creates HCC
-
-WARM CONNECTION
-    18-byte HCC reference
-    +
-    cryptographic payload
-
-TARGET:
-    ~80–120 bytes
-    for an aggressive secure compact handshake
-
-CONSERVATIVE:
-    ~120–180 bytes
-
-CONTROL REFERENCE:
-    exactly 18 bytes
+NO VALID HANDSHAKE
+        |
+        v
+NO ESTABLISHED SESSION
+        |
+        v
+NO APPLICATION DATA
 ```
 
-Security MUST take priority over reaching the smallest possible byte count.
+For authenticated 1-RTT:
+
+```text
+NO VERIFIED RESPONDER
+        |
+        v
+NO AUTHENTICATED APPLICATION DATA
+```
+
+For Responder-side application delivery:
+
+```text
+NO VERIFIED INITIATOR
+        |
+        v
+NO APPLICATION DELIVERY
+```
+
+For AEAD:
+
+```text
+ONE KEY
+   +
+ONE NONCE
+   |
+   v
+ONE UNIQUE ENCRYPTED RECORD
+```
+
+A nonce MUST NEVER be reused with the same key.
+
+A sequence number MUST NEVER wrap under the same key.
+
+A sequence number MAY start at zero.
+
+A sequence number MAY be reset after a successful key change.
+
+For HCC:
+
+```text
+CACHE_ID != AUTHENTICATION
+
+CACHE HIT != AUTHENTICATION
+
+EXPIRED CACHE != VALID SESSION
+
+INVALID CACHE -> FULL HANDSHAKE
+
+RESUMPTION -> FRESH SESSION KEYS
+```
 
 ---
 
-# 127. Final Principle
+# 184. Final Optimized GSP 1.1 Handshake
 
-The fundamental optimization of HCC is:
+The canonical optimized authenticated GSP 1.1 handshake is:
+
+1. Initiator generates fresh random state.
+
+2. Initiator generates a fresh ephemeral X25519 key pair.
+
+3. Initiator sends:
 
 ```text
-DO NOT SEND AGAIN
-WHAT BOTH SIDES ALREADY KNOW
+HELLO
++ supported versions
++ supported ciphers
++ supported KEX
++ supported authentication
++ capabilities
++ random
++ X25519 public key
 ```
 
-Instead:
+4. Responder validates `HELLO`.
+
+5. Responder selects:
 
 ```text
-FIRST CONNECTION
-    negotiate
-    authenticate
-    establish
-    cache
-
-NEXT CONNECTION
-    reference
-    prove possession
-    establish fresh keys
+version
+cipher
+KEX
+authentication
+compression
+capabilities
 ```
 
-The cache is therefore an optimization layer around the handshake, not a replacement for cryptographic authentication.
+6. Responder generates fresh random state.
+
+7. Responder generates a fresh ephemeral X25519 key pair.
+
+8. Responder creates the Responder pre-authentication context.
+
+9. Responder creates the required authentication proof.
+
+10. Responder sends:
+
+```text
+HELLO_ACK
++ selected parameters
++ random
++ X25519 public key
++ responder identity
++ responder authentication proof
+```
+
+11. Initiator validates the response.
+
+12. Initiator verifies the Responder authentication proof.
+
+13. If authentication fails:
+
+```text
+HANDSHAKE FAILED
+```
+
+14. If authentication succeeds, the Initiator is permitted to proceed with authenticated 1-RTT application DATA.
+
+15. Both peers calculate:
+
+```text
+X25519 shared secret
+```
+
+16. Both peers derive:
+
+```text
+handshake secrets
+traffic keys
+Finished keys
+```
+
+17. Both peers construct the final canonical transcript.
+
+18. Initiator sends:
+
+```text
+FINISH
++ Initiator authentication
++ Finished verification
++ optional encrypted application DATA
+```
+
+19. Responder verifies:
+
+```text
+Initiator authentication
+Finished verification
+transcript
+AEAD
+replay state
+```
+
+20. Responder delivers application DATA only after successful verification.
+
+21. Responder sends:
+
+```text
+FINISH_ACK
+```
+
+22. Initiator verifies `FINISH_ACK`.
+
+23. Both peers enter:
+
+```text
+ESTABLISHED
+```
+
+24. A successful full handshake MAY create an HCC context.
+
+25. Future connections MAY use the HCC compact resumption profile.
+
+26. Every resumed session derives fresh traffic keys.
+
+27. PFS-enabled resumed sessions use fresh X25519 ephemeral keys.
+
+28. Traffic keys MAY be rotated using `KEY_UPDATE`.
+
+29. Sequence numbers MUST never wrap under a single key.
+
+30. The session terminates using:
+
+```text
+CLOSE
+```
 
 ---
 
-# 128. End
+# 185. Final HCC Contract
 
-**GSP Handshake Protocol Specification 1.1 — HCC / Compact Resumption**
+HCC exists to reduce repeated handshake metadata.
+
+The first connection may be larger:
+
+```text
+FULL HANDSHAKE
+       |
+       v
+CREATE CACHE
+```
+
+Future connections may use:
+
+```text
+18-BYTE HCC REFERENCE
+       +
+FRESH CRYPTOGRAPHIC MATERIAL
+       +
+RESUMPTION AUTHENTICATION
+```
+
+The compact reference is:
+
+```text
+TYPE        1 byte
+FLAGS       1 byte
+CACHE_ID    8 bytes
+GENERATION  8 bytes
+--------------------
+TOTAL       18 bytes
+```
+
+The complete secure resumed handshake is larger than 18 bytes.
+
+The target for the complete compact cryptographic exchange is approximately:
+
+```text
+~80–120 bytes
+```
+
+when the selected profile allows it.
+
+A larger handshake is always preferable to removing a required security property.
+
+---
+
+# 186. Final Principle
+
+The GSP 1.1 handshake follows four fundamental rules:
+
+```text
+FIRST CONNECTION:
+    SEND + AUTHENTICATE + CACHE
+
+SUBSEQUENT CONNECTION:
+    REFERENCE + PROVE + FRESH KEYS
+
+AUTHENTICATED 1-RTT:
+    VERIFY RESPONDER BEFORE DATA
+
+HCC:
+    OPTIMIZE THE HANDSHAKE
+    DO NOT REPLACE THE SECURITY
+```
+
+The cache is an optimization mechanism.
+
+The cryptographic handshake remains the security mechanism.
+
+---
+
+# 187. End of Specification
+
+**GSP Handshake Protocol Specification**
 
 **Globalized Secure Protocol**
 
+**Version 1.1 — FOAREVAMP**
+
 **Status:** Experimental / Draft
 
-**URI:** `gsp://`
+**URI Scheme:** `gsp://`
+
+**Optimized 1-RTT Handshake**
+
+**Integrated X25519**
+
+**ChaCha20-Poly1305**
+
+**HKDF-SHA-256**
+
+**Canonical Binary Encoding**
+
+**Transcript Authentication**
+
+**Responder Authentication Before 1-RTT Application DATA**
+
+**Directional Key Separation**
+
+**Replay Protection**
+
+**Downgrade Protection**
+
+**Forward Secrecy**
+
+**Key Update**
+
+**Session Resumption**
+
+**Handshake Context Cache**
+
+**18-Byte Compact HCC Reference**
+
+**END OF DOCUMENT**
