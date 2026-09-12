@@ -2408,656 +2408,1195 @@ Older generations MUST be rejected.
 
 ---
 
-# 115. 18-Byte HCC Reference
+# 115. 18-Byte HCC Compact Reference
 
-The compact HCC control reference is:
+The GSP HCC compact profile defines a complete 18-byte control message.
+
+The compact representation is:
 
 ```text
-+--------+--------+----------------+------------------+
-| Type   | Flags  | CACHE_ID       | Generation       |
-| 1 byte | 1 byte | 8 bytes        | 8 bytes          |
-+--------+--------+----------------+------------------+
++--------+--------+----------------+------------------+----------+
+| Type   | Flags  | CACHE_ID       | Generation       | Auth Tag |
+| 1 byte | 1 byte | 6 bytes        | 4 bytes          | 6 bytes  |
++--------+--------+----------------+------------------+----------+
+
+Total: 18 bytes
+```
+
+Field sizes:
+
+```text
+Type:
+    1 byte
+
+Flags:
+    1 byte
+
+CACHE_ID:
+    6 bytes
+
+Generation:
+    4 bytes
+
+Compact Authenticator:
+    6 bytes
 ```
 
 Total:
 
 ```text
-1 + 1 + 8 + 8 = 18 bytes
+1 + 1 + 6 + 4 + 6 = 18 bytes
 ```
 
-This is the official HCC compact-reference target.
+This is the actual wire size of the compact HCC control message.
+
+The 18-byte message does not contain an X25519 public key.
+
+The compact profile therefore does not perform a fresh asymmetric key exchange on every resumed connection.
 
 ---
 
-# 116. Meaning of the 18-Byte Reference
+# 116. Compact HCC Security Model
 
-The 18-byte structure identifies:
+The compact HCC profile uses a symmetric ratchet derived from previously established resumption state.
+
+The basic model is:
 
 ```text
-compact operation
-cached context
-cache generation
+Full Handshake
+      |
+      v
+Resumption Root
+      |
+      v
+HCC Context
+      |
+      v
+Symmetric Ratchet
+      |
+      +--> Generation 1
+      +--> Generation 2
+      +--> Generation 3
+      +--> ...
 ```
 
-It does NOT contain all cryptographic material.
+Each generation produces fresh cryptographic session state.
 
-It does NOT prove identity.
+The previous ratchet state SHOULD be securely erased after successful advancement.
 
-It does NOT authenticate the peer.
+The compact profile therefore provides:
 
-It does NOT contain the complete handshake.
+* low handshake size;
+* low computational overhead;
+* replay resistance through generation state;
+* proof of possession of the resumption secret;
+* protection of previous ratchet states when securely erased.
+
+The compact ratchet MUST NOT be described as equivalent to full per-session X25519 Forward Secrecy.
 
 ---
 
-# 117. Compact Cryptographic Payload
+# 117. HCC Security Trade-Off
 
-A secure compact connection may additionally require:
+The compact HCC profile intentionally trades fresh asymmetric key exchange on every connection for a symmetric ratchet.
 
-```text
-fresh nonce
-fresh X25519 public key
-resumption authenticator
-transcript binding
-Finished verification
-```
-
-Therefore:
+This produces the following security model:
 
 ```text
-18-byte HCC reference
-+
-cryptographic payload
-=
-actual compact handshake
+Past sessions:
+    Protected when previous ratchet states are erased.
+
+Current session:
+    Protected by the current ratchet state.
+
+Future sessions:
+    Depend on the current ratchet state until reanchoring.
 ```
+
+Therefore compromise of the current ratchet state may allow derivation of subsequent sessions until a successful asymmetric reanchor occurs.
+
+Implementations requiring continuous per-session PFS MUST use the full/reanchor profile instead of the compact ratchet profile.
 
 ---
 
-# 118. Compact Handshake Size Target
+# 118. HCC Reanchoring
 
-GSP HCC defines these engineering targets:
+The compact ratchet MUST periodically be reanchored using a fresh asymmetric key exchange.
+
+The recommended reanchor mechanism is:
+
+```text
+X25519
+```
+
+A reanchor establishes a new independent ratchet root.
+
+Conceptually:
+
+```text
+Old Ratchet
+     |
+     v
+Generation N
+     |
+     v
+REANCHOR
+     |
+     +--> fresh X25519
+     |
+     v
+New Ratchet Root
+     |
+     v
+Generation 0
+```
+
+The old ratchet state MUST NOT be used after successful reanchoring.
+
+---
+
+# 119. Reanchor Policy
+
+Implementations MUST define a reanchor policy.
+
+A reanchor MAY be triggered by:
+
+```text
+maximum number of compact sessions
+maximum ratchet age
+administrative policy
+credential rotation
+security event
+suspected compromise
+explicit peer request
+protocol policy
+```
+
+The exact threshold MAY be implementation-defined.
+
+Implementations SHOULD avoid allowing a single ratchet chain to remain active indefinitely.
+
+---
+
+# 120. HCC Context
+
+A cache entry SHOULD contain:
+
+```text
+cache_id
+cache_generation
+
+hcc_version
+
+protocol_version
+
+cipher_suite
+key_exchange_suite
+authentication_mode
+compression_mode
+
+capabilities
+
+peer_identity
+peer_identity_binding
+
+context_hash
+
+resumption_secret
+ratchet_secret
+
+created_at
+last_used_at
+expires_at
+idle_expires_at
+
+credential_generation
+protocol_generation
+
+reanchor_policy
+```
+
+The cache MUST NOT contain old traffic keys.
+
+The cache MUST NOT contain old X25519 ephemeral private keys.
+
+---
+
+# 121. HCC Context Hash
+
+The cache context MUST have a canonical representation.
+
+Then:
+
+```text
+context_hash =
+    SHA-256(
+        canonical_context
+    )
+```
+
+The context hash MUST be cryptographically bound to the resumption and ratchet state.
+
+Security-sensitive context changes MUST produce a different context hash.
+
+---
+
+# 122. CACHE_ID
+
+`CACHE_ID` is an opaque cache identifier.
+
+The compact profile uses:
+
+```text
+48 bits
+```
+
+The resulting identifier space is:
+
+```text
+2^48
+```
+
+`CACHE_ID` MUST NOT be considered secret.
+
+Knowledge of `CACHE_ID` alone MUST NOT authorize a resumed session.
+
+The reduced 48-bit identifier is an engineering trade-off required by the 18-byte compact format.
+
+Deployments requiring stronger identifier-space properties MAY use an extended HCC format.
+
+---
+
+# 123. Cache Generation
+
+The compact profile uses:
+
+```text
+uint32
+```
+
+for the generation field.
+
+The generation identifies the current ratchet position.
+
+Example:
+
+```text
+CACHE_ID:
+    A71C92E41F00
+
+Generation:
+    00000004
+```
+
+A successful compact connection advances the ratchet.
+
+For example:
+
+```text
+Generation 4
+     |
+     v
+Generation 5
+```
+
+An already-consumed generation MUST NOT be accepted again.
+
+---
+
+# 124. HCC Ratchet Root
+
+The initial HCC ratchet root is derived from the resumption state created by the full handshake.
+
+Conceptually:
+
+```text
+ratchet_secret =
+    HKDF-Expand(
+        resumption_secret,
+        "GSP/1.1 HCC RATchet Root" ||
+        context_hash,
+        32
+    )
+```
+
+The resulting value becomes the initial ratchet state.
+
+The exact HKDF schedule MUST use domain separation.
+
+---
+
+# 125. Symmetric Ratchet Advancement
+
+For each new compact session:
+
+```text
+next_ratchet_secret =
+    HKDF-Expand(
+        current_ratchet_secret,
+        "GSP/1.1 HCC RATchet" ||
+        Encode(generation),
+        32
+    )
+```
+
+The new ratchet secret MUST be used for the new generation.
+
+After successful advancement:
+
+```text
+current_ratchet_secret
+        |
+        v
+securely erase
+```
+
+The implementation SHOULD ensure that old ratchet state cannot be recovered from ordinary memory.
+
+---
+
+# 126. Session Secret Derivation
+
+The new session secret is derived independently from the ratchet advancement.
+
+Conceptually:
+
+```text
+session_secret =
+    HKDF-Expand(
+        next_ratchet_secret,
+        "GSP/1.1 HCC Session" ||
+        Encode(generation) ||
+        context_hash,
+        32
+    )
+```
+
+The session secret MUST NOT be used directly as an AEAD key.
+
+It MUST be expanded into purpose-specific key material.
+
+---
+
+# 127. Compact Authentication Tag
+
+The compact HCC message contains a truncated authenticator.
+
+The authenticator is:
+
+```text
+compact_authenticator =
+    Truncate_48(
+        HMAC-SHA-256(
+            current_ratchet_secret,
+            "GSP/1.1 HCC Compact" ||
+            cache_id ||
+            generation ||
+            context_hash
+        )
+    )
+```
+
+Where:
+
+```text
+Truncate_48
+```
+
+returns the first 6 bytes of the HMAC result.
+
+The compact authenticator exists primarily as an early validation gate.
+
+It MUST NOT be considered equivalent to full Finished authentication.
+
+---
+
+# 128. Compact Authentication Purpose
+
+The compact authenticator allows the Responder to reject unauthorized requests before performing expensive operations.
+
+The intended processing order is:
+
+```text
+18-byte request
+      |
+      v
+Parse
+      |
+      v
+Cache lookup
+      |
+      v
+Generation validation
+      |
+      v
+Compact authenticator
+      |
+      +---- FAIL ---> DROP / REJECT
+      |
+      v
+Ratchet processing
+      |
+      v
+Session key derivation
+      |
+      v
+FINISH
+```
+
+An attacker who knows only `CACHE_ID` MUST NOT be able to pass this gate.
+
+---
+
+# 129. Compact Authenticator Security Level
+
+The compact authenticator has:
+
+```text
+48-bit truncated output
+```
+
+This provides approximately:
+
+```text
+1 / 2^48
+```
+
+probability of random forgery per independent attempt.
+
+The value is intentionally truncated to satisfy the 18-byte wire budget.
+
+The compact authenticator is therefore an **early anti-DoS and authorization filter**, not the final authentication mechanism.
+
+The full `FINISH` verification remains mandatory.
+
+High-security deployments MAY use an extended HCC format with a longer authenticator.
+
+---
+
+# 130. Compact HCC Wire Format
+
+The complete compact request is:
+
+```text
+Compact HCC Request:
+
+Type:
+    1 byte
+
+Flags:
+    1 byte
+
+CACHE_ID:
+    6 bytes
+
+Generation:
+    4 bytes
+
+Compact Authenticator:
+    6 bytes
+```
+
+Total:
 
 ```text
 18 bytes
-    HCC control/reference
-
-~80–120 bytes
-    aggressive compact cryptographic exchange
-
-~120–180 bytes
-    conservative compact exchange
 ```
 
-Actual size depends on:
+No additional random field is required by the baseline compact profile.
 
-* authentication profile;
-* KEX profile;
-* ticket format;
-* transport framing;
-* extensions;
-* cryptographic authenticator;
-* optional 0-RTT.
+Freshness is provided by the monotonically advancing generation and ratchet state.
 
-These are targets, not fixed mandatory handshake sizes.
+Profiles requiring explicit per-session randomness MUST use an extended HCC format or reanchor handshake.
 
 ---
 
-# 119. Why the Complete Handshake Is Not 18 Bytes
+# 131. No X25519 in Baseline Compact Mode
 
-X25519 public keys require:
+The baseline compact HCC profile does not transmit:
+
+```text
+X25519 public key
+```
+
+in the 18-byte request.
+
+This is intentional.
+
+An X25519 public key requires:
 
 ```text
 32 bytes
 ```
 
-A cryptographically authenticated session also requires authentication material and freshness.
+and therefore cannot fit inside the 18-byte budget.
 
-Therefore GSP MUST NOT claim:
+The compact profile instead derives fresh session state from the symmetric HCC ratchet.
+
+---
+
+# 132. Freshness in Compact Mode
+
+The compact profile obtains session freshness from:
 
 ```text
-"complete secure X25519 handshake = 18 bytes"
+CACHE_ID
++
+Generation
++
+Ratchet state
 ```
 
-The correct statement is:
+Each generation MUST be used at most once.
+
+A generation that has already been consumed MUST NOT be accepted again.
+
+The same compact request therefore cannot establish an unlimited number of equivalent sessions.
+
+---
+
+# 133. Compact Replay Protection
+
+The Responder MUST maintain sufficient state to determine whether a compact generation has already been consumed.
+
+At minimum:
 
 ```text
-"HCC compact control reference = 18 bytes."
+current_generation
+current_ratchet_secret
+```
+
+MUST be maintained.
+
+A request with:
+
+```text
+generation < current_generation
+```
+
+MUST be rejected.
+
+A request with:
+
+```text
+generation == current_generation
+```
+
+MUST only be accepted if the protocol state explicitly permits that generation to be consumed.
+
+A request with:
+
+```text
+generation > current_generation
+```
+
+MUST NOT be accepted blindly.
+
+Implementations MAY permit only:
+
+```text
+generation == current_generation + 1
+```
+
+for sequential ratchet advancement.
+
+---
+
+# 134. Atomic Ratchet Advancement
+
+Ratchet advancement MUST be atomic with respect to connection state.
+
+The implementation MUST avoid:
+
+```text
+derive generation N+1
+send response
+crash
+restore generation N
+```
+
+because this could allow generation reuse.
+
+Implementations SHOULD persist or otherwise safely commit ratchet state when persistence is required.
+
+---
+
+# 135. Failed Compact Authentication
+
+If the compact authenticator fails:
+
+```text
+RESUMPTION_AUTH_FAILED
+```
+
+MAY be returned.
+
+For publicly exposed services, implementations SHOULD prefer silently dropping or rate-limiting invalid requests where revealing cache state would aid attackers.
+
+The Responder MUST NOT:
+
+* generate fresh X25519 keys;
+* generate expensive signatures;
+* create new cache entries;
+* derive expensive session state;
+
+before the compact authentication gate succeeds.
+
+---
+
+# 136. HCC Lookup Order
+
+The Responder MUST process compact requests in the following order:
+
+```text
+1. Parse
+2. Validate fixed length
+3. Validate type
+4. Validate flags
+5. Lookup CACHE_ID
+6. Validate cache integrity
+7. Validate generation
+8. Validate expiration
+9. Validate revocation
+10. Validate context compatibility
+11. Validate compact authenticator
+12. Advance ratchet state
+13. Derive session keys
+14. Continue handshake
+```
+
+Expensive asymmetric operations MUST NOT occur before step 11 in the baseline compact profile.
+
+---
+
+# 137. HCC Authentication Gate
+
+A successful compact authenticator means:
+
+```text
+Peer possesses valid ratchet state
+```
+
+It does not by itself mean:
+
+```text
+Application authenticated
+```
+
+The complete sequence remains:
+
+```text
+Compact Authenticator
+        |
+        v
+Ratchet Authentication
+        |
+        v
+Session Key Derivation
+        |
+        v
+Responder Authentication
+        |
+        v
+FINISH
+        |
+        v
+Application DATA
 ```
 
 ---
 
-# 120. Resumption Secret
+# 138. Responder Authentication During Compact Resumption
 
-A successful full handshake creates a resumption secret.
+The Responder MUST authenticate the resumed session using the identity and authentication state stored in the HCC context.
 
-It MUST be cryptographically bound to:
+The Responder authentication MUST be bound to:
 
-* peer identity;
-* protocol version;
-* negotiated parameters;
-* context hash;
-* authentication context;
-* handshake transcript.
+```text
+CACHE_ID
+generation
+context_hash
+peer identity
+new session state
+protocol version
+selected parameters
+```
+
+The Initiator MUST verify the Responder authentication before sending authenticated application DATA.
+
+Therefore:
+
+```text
+COMPACT REQUEST
+       |
+       v
+COMPACT ACK
+       |
+       v
+VERIFY RESPONDER
+       |
+       v
+FINISH + DATA
+```
+
+is the permitted authenticated flow.
+
+---
+
+# 139. Compact Finished Verification
+
+The resumed session MUST perform a complete Finished exchange.
+
+The Finished value MUST prove possession of the derived session state.
 
 Conceptually:
 
 ```text
-resumption_secret =
+finished_key =
     HKDF-Expand(
-        handshake_secret,
-        "GSP/1.1 resumption" ||
-        context_hash,
-        ...
+        session_secret,
+        "GSP/1.1 HCC Finished",
+        32
     )
+```
+
+Then:
+
+```text
+verify_data =
+    HMAC(
+        finished_key,
+        transcript_hash
+    )
+```
+
+The exact Finished construction MUST be defined by the selected cryptographic profile.
+
+---
+
+# 140. Compact Resumption Flow
+
+```text
+Initiator                                      Responder
+
+18-byte HCC request
+---------------------------------------------->
+
+                         Parse
+                         Cache lookup
+                         Generation check
+                         Context validation
+                         Compact authenticator
+
+                         If invalid:
+                         DROP / REJECT
+
+                         If valid:
+                         Advance ratchet
+                         Derive session state
+                         Authenticate responder
+
+COMPACT_ACK
++ authenticated session context
+<----------------------------------------------
+
+Verify Responder authentication
+
+Derive session keys
+
+FINISH
++ Initiator authentication
++ Finished
++ optional encrypted DATA
+---------------------------------------------->
+
+                         Verify Initiator
+                         Verify Finished
+                         Verify transcript
+                         Decrypt DATA
+
+FINISH_ACK
+<----------------------------------------------
+
+Verify FINISH_ACK
+
+             ESTABLISHED
 ```
 
 ---
 
-# 121. Resumption Authentication
+# 141. Compact DATA Security Gate
 
-A compact handshake MUST prove possession of the resumption secret.
+The Initiator MUST NOT send authenticated application DATA until:
+
+```text
+Responder authentication
+        +
+required parameter validation
+```
+
+has succeeded.
+
+The Responder MUST NOT deliver application DATA until:
+
+```text
+Initiator authentication
+        +
+Finished verification
+        +
+AEAD verification
+        +
+replay validation
+```
+
+have succeeded.
+
+---
+
+# 142. HCC Reanchor Handshake
+
+When the reanchor policy requires fresh asymmetric key material, the peers perform a normal cryptographic handshake.
+
+The reanchor MUST generate:
+
+```text
+fresh X25519 initiator key
+fresh X25519 responder key
+fresh handshake state
+fresh resumption root
+fresh ratchet root
+```
+
+The new root MUST NOT be derived solely from the old ratchet secret.
+
+The purpose of reanchoring is to introduce new independent asymmetric entropy.
+
+---
+
+# 143. Reanchor Key Schedule
 
 Conceptually:
 
 ```text
-resume_authenticator =
-    MAC(
-        resumption_secret,
-        compact_transcript
-    )
+fresh X25519 shared_secret
+          +
+authenticated HCC context
+          |
+          v
+HKDF
+          |
+          +--> new handshake_secret
+          |
+          +--> new traffic keys
+          |
+          +--> new resumption_secret
+          |
+          +--> new ratchet_secret
 ```
 
-The authenticator MUST bind:
-
-* CACHE_ID;
-* cache generation;
-* context hash;
-* fresh connection state;
-* protocol version;
-* negotiated parameters;
-* fresh KEX material where used.
+The new ratchet is therefore cryptographically reanchored.
 
 ---
 
-# 122. Fresh Cryptographic State
+# 144. Reanchor Security Property
 
-Every resumed connection MUST use fresh session cryptographic state.
+If an attacker compromises the old ratchet state before reanchoring, successful reanchoring prevents the attacker from deriving the new ratchet solely from the compromised state.
 
-At minimum, the implementation MUST NOT reuse:
+The attacker would additionally require the new handshake's cryptographic secrets.
 
-```text
-old traffic keys
-old session nonce
-old traffic sequence state
-```
-
-Where the selected profile provides PFS, a fresh X25519 ephemeral key pair MUST be generated.
+This restores the stronger Forward Secrecy properties of the X25519 profile.
 
 ---
 
-# 123. HCC Lookup
+# 145. Compact vs Reanchor Profiles
 
-On receiving a compact connection request, the Responder performs:
+GSP defines two HCC operating profiles.
+
+## Compact Profile
 
 ```text
-1. Parse reference.
-2. Validate length.
-3. Locate CACHE_ID.
-4. Validate generation.
-5. Validate HCC version.
-6. Check expiration.
-7. Check revocation.
-8. Check context integrity.
-9. Check protocol compatibility.
-10. Check parameter compatibility.
-11. Validate resumption authenticator.
-12. Validate freshness.
-13. Validate replay state.
-14. Continue handshake.
+18-byte control request
+symmetric ratchet
+no fresh X25519 per connection
+very low overhead
 ```
 
-A failed check MUST NOT cause partial acceptance of the cached context.
+Security:
+
+```text
+Past sessions:
+    protected if old states erased
+
+Future sessions:
+    dependent on current ratchet until reanchor
+```
+
+## Reanchor Profile
+
+```text
+full cryptographic handshake
+fresh X25519
+new independent ratchet root
+strong PFS restoration
+larger handshake
+```
+
+The implementation MAY switch automatically according to policy.
 
 ---
 
-# 124. Cache Hit
-
-A cache hit means only:
+# 146. Recommended HCC Lifecycle
 
 ```text
-CACHE_ID exists
+FULL HANDSHAKE
+      |
+      v
+NEW RESUMPTION SECRET
+      |
+      v
+NEW HCC RATCHET
+      |
+      v
+COMPACT GENERATION 0
+      |
+      v
+COMPACT GENERATION 1
+      |
+      v
+COMPACT GENERATION 2
+      |
+      v
+...
+      |
+      v
+REANCHOR
+      |
+      v
+NEW X25519
+      |
+      v
+NEW RATCHET ROOT
 ```
-
-It does NOT mean:
-
-```text
-peer authenticated
-session authenticated
-resumption authorized
-```
-
-Authentication requires cryptographic proof.
 
 ---
 
-# 125. Cache Miss
+# 147. HCC Expiration
 
-If no valid context exists:
-
-```text
-CACHE_MISS
-```
-
-The connection MUST fall back to the full handshake.
-
----
-
-# 126. Cache Expiration
-
-Each cache entry MUST have an expiration time.
-
-Recommended fields:
+Each cache entry MUST contain:
 
 ```text
 created_at
 expires_at
 ```
 
-An implementation MAY additionally enforce:
+An implementation MAY additionally maintain:
 
 ```text
 idle_expires_at
 ```
 
-When:
+Expired cache state MUST NOT be used.
+
+Expiration MUST result in:
 
 ```text
-current_time >= expires_at
-```
-
-the entry is expired.
-
-Expired state MUST NOT be used for resumption.
-
----
-
-# 127. Cache Expiration Flow
-
-```text
-COMPACT_HELLO
-      |
-      v
-CACHE LOOKUP
-      |
-      v
-EXPIRED
-      |
-      v
 FULL HANDSHAKE
-      |
-      v
-NEW HCC CONTEXT
 ```
+
+unless an independently valid recovery mechanism exists.
 
 ---
 
-# 128. Cache Invalidation
+# 148. HCC Invalidation
 
 A cache entry MUST be invalidated when required by security policy.
 
 Examples:
 
-* credential rotation;
-* peer identity change;
-* protocol incompatibility;
-* cryptographic suite change;
-* authentication policy change;
-* explicit revocation;
-* detected compromise;
-* generation mismatch;
-* administrator invalidation.
-
----
-
-# 129. Cache Poisoning Protection
-
-Remote peers MUST NOT be allowed to directly insert arbitrary trusted cache entries.
-
-An HCC entry MUST only be created after the required handshake authentication succeeds.
-
-Untrusted cache metadata MUST NOT overwrite an existing trusted entry without validation.
-
----
-
-# 130. Cache Storage
-
-HCC MAY be implemented using:
-
-* memory;
-* local files;
-* databases;
-* secure platform storage;
-* hardware-backed storage.
-
-The GSP wire protocol does not require filesystem storage.
-
-The term "cache" describes protocol state, not a required filesystem format.
-
----
-
-# 131. Cache Secret Protection
-
-Sensitive values such as:
-
 ```text
-resumption_secret
-identity-bound secret state
-ticket encryption state
-```
-
-SHOULD be protected at rest.
-
-Implementations SHOULD use platform secure storage when available.
-
----
-
-# 132. Cache Secret Separation
-
-HCC MUST NOT store or reuse:
-
-```text
-old traffic keys
-old traffic nonces
-old X25519 ephemeral private keys
-```
-
-The cache stores state needed to establish a new session.
-
-It does not store an active session for replay.
-
----
-
-# 133. Cache Lifetime
-
-An implementation SHOULD define:
-
-```text
-maximum lifetime
-maximum idle lifetime
-maximum number of entries
-maximum entry size
+credential rotation
+identity change
+protocol incompatibility
+cipher change
+KEX policy change
+authentication policy change
+explicit revocation
+suspected compromise
+ratchet corruption
+generation exhaustion
+administrative deletion
 ```
 
 ---
 
-# 134. Cache DoS Protection
+# 149. Generation Exhaustion
 
-An implementation MUST NOT allocate unlimited storage because remote peers request new sessions.
-
-Recommended protections include:
-
-* bounded cache size;
-* bounded number of entries;
-* rate limiting;
-* eviction policy;
-* authentication before expensive state creation.
-
----
-
-# 135. Cache Eviction
-
-When storage limits are reached, entries MAY be evicted.
-
-Eviction MUST NOT be treated as a protocol failure.
-
-The next connection performs:
+Because the compact generation uses:
 
 ```text
-FULL HANDSHAKE
+uint32
 ```
 
----
+the generation MUST NOT wrap.
 
-# 136. Cache Enumeration
-
-Because `CACHE_ID` is not secret, implementations MUST consider enumeration.
-
-A 64-bit identifier is the compact baseline.
-
-Deployments requiring stronger anti-enumeration properties SHOULD use:
-
-* larger identifiers;
-* opaque authenticated tickets;
-* encrypted tickets;
-* additional secret-bound authentication.
-
----
-
-# 137. Cache Tickets
-
-An implementation MAY replace server-side cache storage with an authenticated encrypted ticket.
-
-The ticket MUST be:
-
-* integrity protected;
-* authenticated;
-* bound to the intended context;
-* expiration controlled;
-* resistant to modification.
-
-A ticket is not equivalent to a plaintext CACHE_ID.
-
----
-
-# 138. Stateless Resumption
-
-A Responder MAY use stateless resumption.
-
-The Responder stores only the secret required to validate protected tickets.
-
-The ticket MAY represent the cached context.
-
-Sensitive information SHOULD be encrypted rather than exposed in the ticket.
-
----
-
-# 139. Cache Freshness
-
-A compact connection MUST contain fresh connection-specific cryptographic state.
-
-Possible mechanisms include:
+Before reaching:
 
 ```text
-fresh random nonce
-server challenge
-monotonic anti-replay state
-authenticated timestamp
-single-use token
+2^32 - 1
 ```
 
-The selected HCC profile MUST define the exact mechanism.
-
----
-
-# 140. Cache Replay Protection
-
-A captured cache reference MUST NOT be sufficient to replay a successful connection.
-
-A captured compact handshake MUST NOT be reusable to establish a new authenticated session.
-
-The resumption authenticator MUST bind fresh session state.
-
----
-
-# 141. Cache and Forward Secrecy
-
-HCC MUST NOT sacrifice Forward Secrecy solely to reduce packet size.
+the implementation MUST perform a reanchor or replace the cache context.
 
 The following is forbidden:
 
 ```text
-Cache old X25519 private key
-        |
-        X
-        |
-reuse it for future sessions
+0xFFFFFFFF -> 0x00000000
 ```
 
-Each new PFS-enabled connection MUST use fresh ephemeral key material.
+under the same ratchet root.
 
 ---
 
-# 142. HCC Compact Handshake
+# 150. Cache Poisoning Protection
 
-Conceptually:
+Remote peers MUST NOT be allowed to overwrite trusted HCC state directly.
+
+A cache entry MUST only be created or replaced after successful authentication.
+
+The following is forbidden:
 
 ```text
-Initiator                                      Responder
-
-18-byte HCC reference
-+ fresh cryptographic state
----------------------------------------------->
-
-                         CACHE LOOKUP
-                         CACHE VALIDATION
-                         Verify resumption
-
-                         COMPACT_ACK
-                         + fresh cryptographic state
-                         + authentication proof
-                         <----------------------
-
-Verify Responder
-
-Derive fresh session keys
-
-FINISH
-+ Initiator authentication
-+ optional DATA
----------------------------------------------->
-
-                         Verify FINISH
-                         Verify Initiator
-                         Decrypt DATA
-
-                         FINISH_ACK
-                         <----------------------
-
-                         ESTABLISHED
+remote CACHE_ID
+      |
+      v
+overwrite trusted cache
 ```
+
+without cryptographic authorization.
 
 ---
 
-# 143. HCC Authentication Gate
+# 151. Cache Storage
 
-The same rule used by the full handshake applies to resumption:
+HCC MAY be stored in:
 
 ```text
-CACHE HIT
-    |
-    v
-CACHE VALID
-    |
-    v
-RESUMPTION AUTHENTICATION
-    |
-    v
-RESPONDER VERIFIED
-    |
-    v
-FINISH + DATA
+memory
+local files
+database
+secure platform storage
+hardware-backed storage
 ```
 
-A cache hit MUST NOT directly enable application DATA.
+Filesystem storage is an implementation detail.
+
+The GSP wire protocol does not define a required cache file format.
 
 ---
 
-# 144. HCC Authentication Binding
+# 152. Cache Secret Protection
 
-For authenticated resumption, the Responder proof MUST be bound to:
+The following values are sensitive:
 
 ```text
-CACHE_ID
-cache_generation
-context_hash
-cached peer identity
-fresh Initiator state
-fresh Responder state
-fresh X25519 keys
-protocol version
-selected parameters
-compact transcript
+resumption_secret
+ratchet_secret
+session derivation state
+ticket encryption state
 ```
+
+They SHOULD be protected at rest.
+
+Implementations SHOULD use secure platform storage when available.
 
 ---
 
-# 145. HCC Downgrade Protection
+# 153. Cache State That MUST NOT Be Reused
 
-The cached context MUST bind:
+HCC MUST NOT retain for future session encryption:
+
+```text
+old traffic keys
+old traffic IVs
+old traffic sequence numbers
+old X25519 private keys
+old Finished keys
+```
+
+Only state required to derive a new session MUST remain.
+
+---
+
+# 154. HCC Context Binding
+
+The ratchet state MUST be bound to:
 
 ```text
 protocol version
 cipher suite
-KEX
+KEX policy
 authentication mode
-compression
-security-sensitive capabilities
+compression mode
+peer identity
+context_hash
 ```
 
-A compact connection MUST NOT silently downgrade any of these.
+A cached ratchet MUST NOT silently migrate to an incompatible security context.
 
 ---
 
-# 146. HCC Parameter Changes
+# 155. HCC Parameter Change
 
-If a security-sensitive parameter changes, the old cache MUST NOT be silently reused.
+If any security-sensitive parameter changes:
+
+```text
+cached context
+      |
+      X
+      |
+full/reanchor handshake
+```
+
+must occur.
 
 Examples:
 
 ```text
 cipher
-authentication mode
-KEX
+authentication
 protocol version
-identity
+peer identity
 security policy
+KEX policy
 ```
-
-The connection falls back to a full handshake.
 
 ---
 
-# 147. HCC Identity Binding
+# 156. HCC Identity Binding
 
-If the cache contains:
+The identity stored in the HCC context MUST be cryptographically bound to the resumption state.
 
-```text
-peer_identity
-```
-
-that identity MUST be cryptographically bound to the resumption state.
-
-The implementation MUST NOT trust a client-supplied identity string merely because its CACHE_ID matches.
+A client-supplied identity string MUST NOT be accepted as proof of identity.
 
 ---
 
-# 148. HCC and GSPID
+# 157. HCC and GSPID
 
-GSPID identity state MAY be associated with an HCC context.
+GSPID identity MAY be associated with an HCC context.
 
 However:
 
 ```text
-CACHE_ID != GSPID authentication
+CACHE_ID != GSPID identity
 ```
 
-GSPID MUST only consider the identity authenticated after the resumption cryptographic proof succeeds.
+GSPID MUST only consider the identity authenticated after successful cryptographic verification.
 
 ---
 
-# 149. HCC and Application Profiles
+# 158. HCC and Application Profiles
 
-A cache MAY be bound to an application profile.
+HCC MAY bind state to an application profile.
 
 Examples:
 
@@ -3068,15 +3607,15 @@ GSPWD
 GSPMAIL
 ```
 
-A cache created for one security-sensitive application profile MUST NOT automatically authorize another profile.
+A cache authorized for one application profile MUST NOT automatically authorize another security-sensitive profile.
 
 ---
 
-# 150. HCC and Transport
+# 159. HCC and Transport
 
-HCC SHOULD be transport-independent.
+HCC SHOULD remain transport-independent.
 
-A context MAY be reused between:
+A cache MAY be reused across:
 
 ```text
 GSP/TCP
@@ -3084,134 +3623,261 @@ GSP/UDP
 GSP/QUIC
 ```
 
-only when the cached context explicitly permits it.
+only when the cached policy explicitly permits it.
 
-Transport-specific state MUST NOT be assumed to be valid on another transport.
+Transport-specific state MUST NOT be blindly reused across transports.
 
 ---
 
-# 151. HCC Corruption
+# 160. HCC Cache Miss
 
-If local cache data is corrupted:
+If no valid cache entry exists:
 
 ```text
-CACHE_INVALID
+CACHE_MISS
 ```
 
-The implementation MUST discard the invalid state and perform a full handshake.
+MAY be returned.
 
-It MUST NOT attempt to guess or repair security-sensitive values.
-
----
-
-# 152. Cache Revocation
-
-A Responder MAY revoke a cache context.
-
-Possible mechanisms include:
+The implementation SHOULD fall back to:
 
 ```text
-generation change
-revocation list
-ticket key rotation
-explicit invalidation
+FULL HANDSHAKE
 ```
+
+rather than treating cache failure as permanent connection failure.
 
 ---
 
-# 153. Cache Key Rotation
-
-For stateless tickets, the Responder MAY maintain:
+# 161. HCC Failure Flow
 
 ```text
-current_ticket_key
-previous_ticket_key
+COMPACT REQUEST
+      |
+      v
+CACHE LOOKUP
+      |
+      +---- MISS ------------+
+      |                      |
+      +---- EXPIRED ---------+
+      |                      |
+      +---- REVOKED ---------+
+      |                      |
+      +---- INVALID ---------+
+      |                      |
+      +---- BAD GENERATION --+
+      |                      |
+      +---- BAD AUTH --------+
+      |                      |
+      v                      v
+VALID CACHE             FULL HANDSHAKE
+      |
+      v
+RATCHET AUTH
+      |
+      +---- FAIL ---> REJECT
+      |
+      v
+SESSION
 ```
-
-The previous key may remain valid for a limited overlap period.
 
 ---
 
-# 154. Cache Refresh
+# 162. HCC Replay Protection
 
-A successful resumed connection MAY refresh:
+A captured 18-byte compact request MUST NOT be sufficient to establish a new session.
+
+Replay protection is based on:
+
+```text
+generation
+ratchet state
+compact authenticator
+Finished verification
+```
+
+A consumed generation MUST NOT be accepted again.
+
+A replayed compact request therefore fails before a second equivalent session can be established.
+
+---
+
+# 163. HCC Amplification Protection
+
+The compact authenticator exists specifically to preserve the DoS protection requirement from Section 98.
+
+The Responder MUST NOT perform expensive cryptographic work for an unauthenticated compact request.
+
+The preferred order is:
+
+```text
+Parse
+ ↓
+Length
+ ↓
+Version
+ ↓
+Flags
+ ↓
+Cache lookup
+ ↓
+Generation
+ ↓
+Context
+ ↓
+Compact authenticator
+ ↓
+Rate limiting / policy
+ ↓
+Ratchet processing
+ ↓
+Expensive cryptography
+```
+
+The exact order of rate limiting and compact authentication MAY be implementation-defined, provided that expensive cryptographic operations remain behind cheap validation.
+
+---
+
+# 164. HCC Rate Limiting
+
+Servers SHOULD rate-limit:
+
+```text
+invalid CACHE_ID
+invalid generation
+invalid compact authenticator
+replayed generation
+expired cache requests
+```
+
+The server MAY rate-limit independently of normal handshake traffic.
+
+---
+
+# 165. HCC Enumeration Protection
+
+Because:
+
+```text
+CACHE_ID
+```
+
+is not secret, implementations MUST assume that an attacker may obtain or enumerate identifiers.
+
+The compact authenticator prevents possession of the identifier from being sufficient to pass the cryptographic gate.
+
+Deployments requiring stronger anti-enumeration properties MAY use:
+
+```text
+128-bit CACHE_ID
+encrypted tickets
+authenticated tickets
+extended HCC format
+```
+
+---
+
+# 166. HCC Stateless Tickets
+
+An implementation MAY use stateless encrypted tickets instead of server-side cache storage.
+
+A ticket MUST provide:
+
+```text
+integrity
+confidentiality where required
+expiration
+context binding
+authentication
+```
+
+The ticket itself is not equivalent to a plaintext `CACHE_ID`.
+
+---
+
+# 167. HCC Cache Refresh
+
+A successful compact session MAY update:
 
 ```text
 last_used_at
 expiration
-resumption state
+ratchet state
 ```
 
-Refreshing MUST NOT bypass authentication.
+A refresh MUST NOT bypass authentication.
 
-An implementation MUST NOT indefinitely extend compromised state without appropriate reauthentication.
+A cache MUST NOT be indefinitely extended without respecting reanchor and security policy.
 
 ---
 
-# 155. Credential Rotation
+# 168. HCC Credential Rotation
 
-When authentication credentials change:
+When long-term credentials change:
 
 ```text
 old HCC
     |
     X
-    |
-invalid
 ```
 
-A new authentication handshake is required.
+The implementation MUST perform a full or reanchor authentication process.
 
 A new HCC context MAY then be created.
 
 ---
 
-# 156. Clock Handling
+# 169. HCC Clock Handling
 
-Expiration SHOULD use a monotonic clock for local lifetime calculations when available.
+Expiration SHOULD use a monotonic clock for local duration calculations where available.
 
-Wall-clock timestamps MAY be stored for diagnostics.
+Wall-clock timestamps MAY be retained for diagnostics.
 
-Clock rollback MUST NOT cause expired credentials to become valid again.
+Clock rollback MUST NOT make expired security state valid again.
 
 ---
 
-# 157. HCC State Machine
+# 170. HCC State Machine
 
 ```text
-              +----------------+
-              |      START     |
-              +-------+--------+
-                      |
-                      v
-              +----------------+
-              | CACHE LOOKUP   |
-              +---+---------+--+
-                  |         |
-                miss       hit
-                  |         |
-                  v         v
-              FULL       VALIDATE
-           HANDSHAKE       |
-                  |         v
-                  |    AUTHENTICATE
-                  |         |
-                  |     +---+---+
-                  |     |       |
-                  |   fail     success
-                  |     |       |
-                  |     v       v
-                  |   FULL    RESUME
-                  |             |
-                  +------+------+ 
-                         |
-                         v
-                    ESTABLISHED
+                 +-------+
+                 | START |
+                 +---+---+
+                     |
+                     v
+              +-------------+
+              | CACHE LOOKUP|
+              +------+------+
+                     |
+                +----+----+
+                |         |
+              MISS       HIT
+                |         |
+                v         v
+             FULL      VALIDATE
+          HANDSHAKE       |
+                |         v
+                |    COMPACT AUTH
+                |         |
+                |     +---+---+
+                |     |       |
+                |   FAIL     PASS
+                |     |       |
+                |     v       v
+                |   REJECT   RATCHET
+                |             |
+                +-------------+
+                       |
+                       v
+                    FINISH
+                       |
+                       v
+                  ESTABLISHED
 ```
 
 ---
 
-# 158. HCC State Rules
+# 171. HCC State Rules
 
 ```text
 START
@@ -3222,14 +3888,18 @@ CACHE_LOOKUP
  -> FULL_HANDSHAKE
 
 CACHE_VALIDATED
- -> RESUMPTION_AUTHENTICATION
+ -> COMPACT_AUTHENTICATION
  -> FULL_HANDSHAKE
 
-RESUMPTION_AUTHENTICATION
- -> RESPONDER_AUTHENTICATED
+COMPACT_AUTHENTICATION
+ -> RATCHET_ADVANCEMENT
  -> FAILED
 
-RESPONDER_AUTHENTICATED
+RATCHET_ADVANCEMENT
+ -> RESPONDER_AUTHENTICATION
+ -> FAILED
+
+RESPONDER_AUTHENTICATION
  -> FINISH
  -> FAILED
 
@@ -3240,735 +3910,415 @@ FINISH
 
 ---
 
-# 159. HCC Full-Connection Creation
+# 172. Complete Compact Handshake — 18 Bytes
 
-After a successful full handshake:
-
-```text
-FULL HANDSHAKE
-       |
-       v
-AUTHENTICATED
-       |
-       v
-CREATE HCC
-       |
-       +--> CACHE_ID
-       +--> GENERATION
-       +--> CONTEXT_HASH
-       +--> RESUMPTION_SECRET
-       +--> EXPIRATION
-```
-
----
-
-# 160. HCC Warm Connection
-
-After the first connection:
+The baseline compact HCC handshake begins with an actual 18-byte request:
 
 ```text
-FIRST CONNECTION
-        |
-        v
-HCC CREATED
-        |
-        v
-SECOND CONNECTION
-        |
-        v
-18-BYTE REFERENCE
-        |
-        v
-COMPACT CRYPTOGRAPHIC EXCHANGE
-        |
-        v
-FRESH SESSION KEYS
-        |
-        v
-ESTABLISHED
-```
+Initiator                                      Responder
 
----
+18-byte HCC Compact Request
++-------------------------------------------------------+
+| Type | Flags | CACHE_ID | Generation | Authenticator |
++-------------------------------------------------------+
+-------------------------------------------------------->
 
-# 161. HCC Cold Connection
+                         Parse
+                         Length validation
+                         Cache lookup
+                         Generation validation
+                         Context validation
+                         Compact authenticator
 
-If no valid cache exists:
+                         If invalid:
+                         DROP / REJECT
 
-```text
-CACHE MISS
-     |
-     v
-FULL HELLO
-     |
-     v
-FULL HELLO_ACK
-     |
-     v
-FULL AUTHENTICATION
-     |
-     v
-FULL HANDSHAKE
-     |
-     v
-NEW HCC
-```
+                         If valid:
+                         Advance ratchet
+                         Derive session state
+                         Prepare authenticated response
 
----
+COMPACT_ACK
++ responder authentication
++ session parameters
+<--------------------------------------------------------
 
-# 162. HCC Expiration Flow
+Verify Responder authentication
 
-```text
-CACHE VALID
-    |
-    v
-COMPACT RESUMPTION
-    |
-    v
-SESSION
-
-        later
-
-CACHE EXPIRES
-    |
-    v
-COMPACT REQUEST
-    |
-    v
-CACHE_EXPIRED
-    |
-    v
-FULL HANDSHAKE
-    |
-    v
-NEW CACHE
-```
-
----
-
-# 163. HCC Negative Security Cases
-
-The following MUST fail safely:
-
-```text
-expired CACHE_ID
-wrong generation
-wrong context_hash
-wrong resumption secret
-modified cache
-modified authenticator
-replayed compact handshake
-reused nonce
-reused X25519 key
-wrong peer identity
-wrong protocol version
-wrong cipher
-wrong KEX
-wrong authentication mode
-downgrade attempt
-corrupted cache
-unknown cache format
-revoked cache
-```
-
----
-
-# 164. Cross-Protocol Protection
-
-All cryptographic derivations MUST use GSP-specific domain labels.
-
-Examples:
-
-```text
-"GSP/1.1 handshake"
-"GSP/1.1 initiator traffic"
-"GSP/1.1 responder traffic"
-"GSP/1.1 initiator finished"
-"GSP/1.1 responder finished"
-"GSP/1.1 resumption"
-"GSP/1.1 HCC"
-```
-
----
-
-# 165. Memory Safety
-
-Implementations MUST validate:
-
-* lengths;
-* integer overflow;
-* buffer boundaries;
-* extension sizes;
-* key sizes;
-* signature sizes;
-* frame sizes.
-
-Network-controlled lengths MUST never result in uncontrolled allocation.
-
----
-
-# 166. Constant-Time Operations
-
-Security-sensitive operations SHOULD use constant-time implementations where applicable.
-
-This includes:
-
-* MAC comparison;
-* Finished verification;
-* secret comparison;
-* cryptographic primitive operations.
-
----
-
-# 167. Logging
-
-Debug logs MAY contain:
-
-* GSP version;
-* cipher;
-* KEX;
-* authentication mode;
-* compression;
-* CID;
-* SID;
-* handshake state;
-* HCC status;
-* cache generation;
-* error code;
-* timing.
-
-Logs MUST NOT contain:
-
-* private keys;
-* shared secrets;
-* PSKs;
-* traffic keys;
-* resumption secrets;
-* authentication secrets.
-
----
-
-# 168. Application API
-
-After establishment, an implementation MAY expose:
-
-```text
-session.id
-session.version
-session.cipher
-session.kex
-session.authentication
-session.compression
-session.peer_identity
-session.max_frame_size
-session.max_streams
-session.resumed
-session.hcc_generation
-```
-
-Raw cryptographic secrets MUST NOT be exposed through the normal API.
-
----
-
-# 169. Handshake Completion Event
-
-A GSP implementation MAY provide:
-
-```text
-onHandshakeComplete(session)
-```
-
-This event MUST NOT occur until all required cryptographic verification succeeds.
-
----
-
-# 170. Handshake Failure Event
-
-An implementation MAY provide:
-
-```text
-onHandshakeFailure(error)
-```
-
-The exposed error SHOULD avoid leaking sensitive cryptographic information.
-
----
-
-# 171. Complete Full Handshake
-
-```text
-INITIATOR                                      RESPONDER
-
-Generate random
-Generate X25519 key pair
-
-HELLO
-+ version
-+ capabilities
-+ cipher suites
-+ KEX suites
-+ authentication
-+ compression
-+ random
-+ X25519 public key
----------------------------------------------->
-
-                         Validate HELLO
-                         Select parameters
-                         Generate random
-                         Generate X25519 pair
-
-                         Build responder
-                         pre-auth context
-
-                         Generate responder
-                         authentication proof
-
-HELLO_ACK
-+ selected parameters
-+ responder random
-+ responder X25519 public key
-+ responder identity
-+ responder authentication proof
-<----------------------------------------------
-
-Verify responder authentication
-        |
-        +---- FAIL ---> FAILED
-        |
-        v
-
-Calculate X25519
-Derive handshake state
 Derive traffic keys
 
 FINISH
 + Initiator authentication
 + Finished
 + optional encrypted DATA
----------------------------------------------->
+-------------------------------------------------------->
 
                          Verify Initiator
-                         Verify transcript
                          Verify Finished
-                         Authenticate DATA
-                         Decrypt DATA
+                         Verify transcript
+                         Verify AEAD
                          Deliver DATA
 
 FINISH_ACK
-<----------------------------------------------
+<--------------------------------------------------------
 
 Verify FINISH_ACK
 
-             ESTABLISHED
+                    ESTABLISHED
 ```
+
+The first message is exactly:
+
+```text
+18 bytes
+```
+
+in the baseline compact profile.
 
 ---
 
-# 172. Complete Compact Handshake
+# 173. Complete Reanchor Handshake
+
+When reanchoring is required:
 
 ```text
-INITIATOR                                      RESPONDER
+Initiator                                      Responder
 
-18-byte HCC reference
+HELLO
 + fresh random
 + fresh X25519 public key
-+ resumption authenticator
 ---------------------------------------------->
 
-                         Lookup HCC
-                         Validate generation
-                         Validate expiration
-                         Validate context
-                         Validate authenticator
-
-                         Generate fresh random
-                         Generate fresh X25519 pair
-
-COMPACT_ACK
-+ HCC reference
-+ fresh random
-+ fresh X25519 public key
-+ responder authentication
-<----------------------------------------------
+                         HELLO_ACK
+                         + fresh random
+                         + fresh X25519 public key
+                         + responder authentication
+                         <----------------------
 
 Verify Responder
 
-Calculate fresh X25519
-Derive fresh session keys
-Construct transcript
+Calculate fresh X25519 shared secret
+
+Derive new handshake state
 
 FINISH
-+ Initiator authentication
++ authentication
 + Finished
-+ optional encrypted DATA
 ---------------------------------------------->
 
+                         Verify FINISH
                          Verify Initiator
-                         Verify Finished
                          Verify transcript
-                         Decrypt DATA
 
-FINISH_ACK
-<----------------------------------------------
+                         FINISH_ACK
+                         <----------------------
 
-Verify FINISH_ACK
-
-             ESTABLISHED
-```
-
----
-
-# 173. Complete Cache Failure Flow
-
-```text
-COMPACT_HELLO
-      |
-      v
-CACHE LOOKUP
-      |
-      +---- MISS --------------------+
-      |                              |
-      +---- EXPIRED -----------------+
-      |                              |
-      +---- REVOKED -----------------+
-      |                              |
-      +---- INVALID -----------------+
-      |                              |
-      +---- GENERATION MISMATCH -----+
-      |                              |
-      +---- CONTEXT MISMATCH --------+
-      |                              |
-      v                              v
-CACHE VALID                    FULL HANDSHAKE
-      |
-      v
-RESUMPTION AUTH
-      |
-      +---- FAIL ---> REJECT
-      |
-      v
-FRESH KEY EXCHANGE
-      |
-      v
-FINISH
-      |
-      v
 ESTABLISHED
+        |
+        v
+NEW HCC RATCHET ROOT
 ```
 
----
-
-# 174. Security Invariants
-
-A compliant implementation MUST preserve all of the following:
-
-1. No authenticated application DATA before required Responder authentication.
-
-2. No application DATA is delivered before required Initiator authentication.
-
-3. No `(Key, Nonce)` pair is ever reused.
-
-4. Sequence numbers never wrap under the same key.
-
-5. Sequence numbers are independent per direction.
-
-6. Sequence reset occurs only after a key change.
-
-7. All multi-byte integers use Big-Endian.
-
-8. Wire structures contain no compiler-generated padding.
-
-9. Variable-length fields have explicit lengths.
-
-10. Cryptographic fields have fixed lengths.
-
-11. Transcript encoding is canonical.
-
-12. Negotiated parameters are transcript-bound.
-
-13. Ephemeral X25519 keys are fresh for PFS-enabled handshakes.
-
-14. Private keys are never transmitted.
-
-15. Raw shared secrets are never transmitted.
-
-16. Traffic keys are separated by direction.
-
-17. Handshake keys and traffic keys are separated.
-
-18. Authentication is bound to the current session.
-
-19. Unknown mandatory extensions cause failure.
-
-20. Failed handshakes cannot transition to `ESTABLISHED`.
-
-21. Nonces remain unique for every AEAD key.
-
-22. Sequence-number exhaustion cannot result in wraparound.
-
-23. Cryptographic primitives use established algorithms.
-
-24. Remote lengths cannot cause unbounded allocation.
-
-25. Downgrade attempts are detected through transcript binding.
-
-26. `CACHE_ID` is never treated as authentication.
-
-27. Cache expiration prevents resumption.
-
-28. Invalid cache state cannot be partially accepted.
-
-29. Resumption creates fresh traffic keys.
-
-30. HCC MUST NOT require reuse of ephemeral X25519 private keys.
-
-31. Resumption authentication is bound to the cached context.
-
-32. Cache state is protected against unauthorized modification.
-
-33. A replayed compact handshake cannot establish a new equivalent session.
+The new ratchet root MUST be independent of the old ratchet state except for explicitly authenticated context binding.
 
 ---
 
-# 175. Recommended Cryptographic Profile
+# 174. Full vs Compact HCC
+
+The GSP implementation SHOULD support:
 
 ```text
-Protocol:
-    GSP/1.1
-
-Key Exchange:
-    X25519
-
-Hash:
-    SHA-256
-
-KDF:
-    HKDF-SHA-256
-
-AEAD:
-    ChaCha20-Poly1305
-
-Nonce:
-    Per-direction static IV + sequence number
-
-Sequence:
-    uint64
-
-Integer Encoding:
-    Big-Endian
-
-Authentication:
-    Public Key / PSK / Certificate / Anonymous
-
-Compression:
-    None / LZ4
-
-Forward Secrecy:
-    Enabled through ephemeral X25519
-
-Handshake:
-    Optimized 1-RTT
-
-Key Update:
-    Supported
-
-Session Resumption:
-    Optional
-
-HCC:
-    Optional
-
-0-RTT:
-    Optional and restricted
+FULL
+COMPACT
+REANCHOR
 ```
 
----
-
-# 176. Implementation Checklist
-
-A GSP implementation SHOULD implement and test:
+Conceptually:
 
 ```text
-[ ] Version negotiation
-[ ] Cipher negotiation
-[ ] KEX negotiation
-[ ] Authentication negotiation
-[ ] Capability negotiation
-[ ] Canonical serialization
-[ ] Big-Endian integer encoding
-[ ] Explicit field sizes
-[ ] X25519 ephemeral KEX
-[ ] HKDF-SHA-256
-[ ] SHA-256 transcript
-[ ] Responder authentication in HELLO_ACK
-[ ] Responder authentication gate
-[ ] Directional key derivation
-[ ] Finished verification
-[ ] AEAD encryption
-[ ] Unique nonce generation
-[ ] uint64 sequence numbers
-[ ] Sequence exhaustion handling
-[ ] Key update
-[ ] Replay protection
-[ ] Downgrade protection
-[ ] Handshake timeout
-[ ] Duplicate handling
-[ ] Retry support
-[ ] Maximum handshake size
-[ ] Extension validation
-[ ] Error handling
-[ ] Secret erasure
-[ ] Fuzz testing
-
-[ ] HCC
-[ ] CACHE_ID
-[ ] Cache generation
-[ ] Cache expiration
-[ ] Cache invalidation
-[ ] Context hash
-[ ] Resumption secret
-[ ] Resumption authentication
-[ ] Cache poisoning protection
-[ ] Cache replay protection
-[ ] Full-handshake fallback
-[ ] Fresh X25519 on resumption
+FULL
+ |
+ +--> create HCC
+       |
+       +--> COMPACT
+       |      |
+       |      +--> COMPACT
+       |      +--> COMPACT
+       |      +--> ...
+       |
+       +--> REANCHOR
+              |
+              +--> new HCC root
 ```
 
 ---
 
-# 177. Required Negative Tests
+# 175. HCC Security Properties
+
+The compact HCC design provides:
+
+```text
+18-byte initial control message
+symmetric key ratcheting
+cheap authentication filtering
+generation-based replay protection
+fresh session-derived keys
+periodic asymmetric reanchoring
+```
+
+It does not provide:
+
+```text
+fresh X25519 PFS for every compact connection
+```
+
+unless the connection uses the reanchor profile.
+
+---
+
+# 176. Security Comparison
+
+The security properties can be summarized as:
+
+```text
+                 Compact HCC       Reanchor
+------------------------------------------------
+18-byte request       YES             NO
+Symmetric ratchet     YES             YES
+Fresh X25519          NO              YES
+Past-state protection YES*            YES
+Future-state PFS      NO*             YES
+Low CPU cost          YES             NO
+Periodic reanchor     REQUIRED        N/A
+```
+
+`*` assumes secure erasure of previous ratchet state and correct reanchor policy.
+
+---
+
+# 177. Required Negative Tests — HCC
 
 Implementations SHOULD test:
 
 ```text
-Invalid version
-Unsupported version
-Invalid cipher
-Unsupported cipher
-Invalid KEX
-Invalid X25519 key
-Modified HELLO
-Modified HELLO_ACK
-Modified random
-Modified public key
-Modified responder authentication
-Invalid signature
-Invalid PSK MAC
-Modified transcript
+Unknown CACHE_ID
+Invalid CACHE_ID
+Expired CACHE_ID
+Revoked CACHE_ID
+Wrong generation
+Old generation
+Future generation
+Generation wrap
+Modified context
+Modified context_hash
+Invalid compact authenticator
+Random authenticator forgery
+Replayed compact request
+Replayed generation
+Ratchet state corruption
+Ratchet state rollback
+Cache poisoning
+Identity substitution
+Protocol downgrade
+Cipher downgrade
+Authentication downgrade
+Invalid responder authentication
 Invalid FINISH
 Invalid FINISH_ACK
-Wrong sequence number
-Duplicate sequence number
-Sequence wrap
-Nonce reuse
-Unknown mandatory extension
-Malformed extension
-Oversized message
-Integer overflow
-Truncated message
-Replay
-Downgrade attempt
-Timeout
-Retry token expiration
-
-Expired cache
-Invalid cache
-Wrong cache generation
-Wrong context hash
-Modified cache
-Invalid resumption authenticator
-Replayed resumption
-Revoked cache
-Cache poisoning attempt
-Reuse of old ephemeral X25519 key
-Resumption parameter downgrade
-Identity substitution
+Old traffic key reuse
+Old X25519 private key reuse
+Reanchor failure
+Reanchor rollback
 ```
 
 ---
 
-# 178. Fuzzing
+# 178. HCC Test Vectors
 
-The handshake parser SHOULD be fuzz-tested with:
-
-* random message types;
-* random lengths;
-* truncated packets;
-* oversized packets;
-* invalid flags;
-* invalid extensions;
-* duplicate fields;
-* invalid sequence numbers;
-* invalid cryptographic identifiers;
-* malformed public keys;
-* malformed signatures;
-* malformed cache references;
-* corrupted cache state.
-
-The implementation MUST remain memory-safe.
-
----
-
-# 179. Test Vectors
-
-The GSP specification SHOULD eventually publish deterministic test vectors containing:
+HCC test vectors SHOULD contain:
 
 ```text
-Initiator random
-Responder random
-Initiator private key
-Initiator public key
-Responder private key
-Responder public key
-Shared secret
-Canonical HELLO
-Canonical HELLO_ACK
-Responder pre-auth transcript
-Responder authentication proof
-Final transcript
-Transcript hash
-Handshake secret
-Traffic keys
-Finished values
-HCC context hash
-Resumption secret
-Compact HCC reference
-Resumption authenticator
+resumption_secret
+context_hash
+CACHE_ID
+initial generation
+initial ratchet_secret
+
+generation N
+current ratchet_secret
+compact authenticator
+
+generation N+1
+next ratchet_secret
+session_secret
+
+Finished key
+Finished value
 ```
 
-These vectors are for interoperability testing only.
+Reanchor test vectors SHOULD additionally contain:
+
+```text
+Initiator X25519 private key
+Initiator X25519 public key
+Responder X25519 private key
+Responder X25519 public key
+Shared secret
+New ratchet root
+```
 
 ---
 
-# 180. Security Review Requirements
+# 179. Updated Security Invariants
 
-Before production deployment, the GSP handshake SHOULD undergo:
+A compliant implementation MUST preserve:
 
-* Cryptographic review
-* Protocol review
-* Implementation audit
-* Fuzz testing
-* Interoperability testing
-* MITM testing
-* Replay testing
-* Downgrade testing
-* Nonce-reuse testing
-* DoS testing
-* Resumption testing
-* Cache poisoning testing
-* Cache expiration testing
-* 0-RTT replay testing if 0-RTT is enabled
+```text
+1. CACHE_ID is never authentication.
+
+2. CACHE_ID alone cannot authorize resumption.
+
+3. Compact authentication MUST occur before expensive cryptography.
+
+4. Compact generations MUST NOT be reused.
+
+5. Generation counters MUST NOT wrap.
+
+6. Ratchet states MUST advance monotonically.
+
+7. Previous ratchet states SHOULD be erased.
+
+8. Old traffic keys MUST NOT be reused.
+
+9. Old X25519 private keys MUST NOT be reused.
+
+10. Compact Finished verification remains mandatory.
+
+11. Responder authentication MUST precede authenticated
+    application DATA.
+
+12. Initiator authentication MUST precede application
+    delivery when required.
+
+13. Compact HCC MUST derive fresh session keys.
+
+14. Compact HCC MUST NOT be described as per-session
+    X25519 Forward Secrecy.
+
+15. Reanchoring MUST introduce fresh asymmetric entropy.
+
+16. Reanchoring MUST establish a new ratchet root.
+
+17. Expired cache state MUST NOT be resumed.
+
+18. Invalid cache state MUST NOT be partially accepted.
+
+19. Cache state MUST be integrity protected.
+
+20. A captured compact request MUST NOT establish an
+    unlimited number of sessions.
+
+21. Negotiated parameters MUST remain cryptographically bound.
+
+22. AEAD key/nonce pairs MUST never repeat.
+```
 
 ---
 
-# 181. Canonical Cold Flow
+# 180. Recommended HCC Profile
+
+```text
+HCC:
+    Enabled
+
+Compact Reference:
+    18 bytes
+
+CACHE_ID:
+    48 bits
+
+Generation:
+    uint32
+
+Compact Authenticator:
+    HMAC-SHA-256 truncated to 48 bits
+
+Compact KDF:
+    HKDF-SHA-256
+
+Compact Ratchet:
+    Symmetric HKDF ratchet
+
+Per-Connection X25519:
+    Not used in baseline compact mode
+
+Reanchor:
+    X25519
+
+Traffic AEAD:
+    ChaCha20-Poly1305
+
+Transcript:
+    SHA-256
+
+Reanchor Policy:
+    Implementation-defined
+
+Replay Protection:
+    Generation + ratchet state + Finished
+
+Application DATA:
+    Only after required Responder authentication
+```
+
+---
+
+# 181. Updated Implementation Checklist
+
+```text
+[ ] HCC cache
+[ ] 18-byte compact format
+[ ] 48-bit CACHE_ID
+[ ] uint32 generation
+[ ] context_hash
+[ ] resumption_secret
+[ ] ratchet_secret
+[ ] HKDF ratchet
+[ ] generation advancement
+[ ] generation replay protection
+[ ] compact authenticator
+[ ] 48-bit authenticator verification
+[ ] cheap validation before expensive crypto
+[ ] atomic ratchet advancement
+[ ] secret erasure
+[ ] cache expiration
+[ ] cache invalidation
+[ ] cache revocation
+[ ] cache poisoning protection
+[ ] cache integrity
+[ ] full-handshake fallback
+[ ] reanchor
+[ ] fresh X25519 on reanchor
+[ ] new ratchet root after reanchor
+[ ] Responder authentication
+[ ] Responder authentication gate
+[ ] Finished verification
+[ ] fresh traffic keys
+[ ] key separation
+[ ] replay protection
+[ ] downgrade protection
+```
+
+---
+
+# 182. Canonical Cold Flow
 
 ```text
 HELLO
     ↓
-HELLO_ACK
+HELLO_ACK + Responder Authentication
     ↓
-Verify Responder
+VERIFY RESPONDER
     ↓
 X25519
     ↓
@@ -3981,42 +4331,32 @@ FINISH_ACK
 ESTABLISHED
     ↓
 CREATE HCC
-```
-
-For authenticated 1-RTT:
-
-```text
-HELLO
     ↓
-HELLO_ACK + Responder Authentication
-    ↓
-VERIFY RESPONDER
-    ↓
-FINISH + optional DATA
-    ↓
-FINISH_ACK
-    ↓
-ESTABLISHED
+CREATE RATCHET ROOT
 ```
 
 ---
 
-# 182. Canonical Warm Flow
+# 183. Canonical Warm Compact Flow
 
 ```text
-18-BYTE HCC REFERENCE
+18-BYTE HCC REQUEST
     ↓
 CACHE LOOKUP
     ↓
-CACHE VALIDATION
+GENERATION VALIDATION
     ↓
-FRESH X25519
+CONTEXT VALIDATION
     ↓
-RESUMPTION AUTHENTICATION
+48-BIT COMPACT AUTHENTICATOR
+    ↓
+RATCHET ADVANCEMENT
+    ↓
+FRESH SESSION SECRET
+    ↓
+RESPONDER AUTHENTICATION
     ↓
 VERIFY RESPONDER
-    ↓
-HKDF
     ↓
 FINISH + optional DATA
     ↓
@@ -4027,21 +4367,108 @@ ESTABLISHED
 
 ---
 
-# 183. Final Security Contract
-
-The GSP handshake MUST guarantee:
+# 184. Canonical Reanchor Flow
 
 ```text
-NO VALID HANDSHAKE
-        |
-        v
-NO ESTABLISHED SESSION
-        |
-        v
-NO APPLICATION DATA
+COMPACT HCC
+    ↓
+REANCHOR POLICY
+    ↓
+FRESH X25519
+    ↓
+NEW SHARED SECRET
+    ↓
+NEW RESUMPTION SECRET
+    ↓
+NEW RATCHET ROOT
+    ↓
+GENERATION 0
+    ↓
+COMPACT HCC
 ```
 
-For authenticated 1-RTT:
+---
+
+# 185. Final HCC Contract
+
+HCC has three distinct security states:
+
+```text
+COLD:
+    Full cryptographic handshake.
+
+WARM:
+    18-byte symmetric-ratchet compact handshake.
+
+REANCHOR:
+    Fresh X25519 handshake establishing a new ratchet root.
+```
+
+The compact HCC message is exactly:
+
+```text
+TYPE        1 byte
+FLAGS       1 byte
+CACHE_ID    6 bytes
+GENERATION  4 bytes
+AUTH TAG    6 bytes
+--------------------
+TOTAL       18 bytes
+```
+
+The 18-byte format is therefore a real complete compact control request rather than:
+
+```text
+18 bytes + X25519 + random + authenticator
+```
+
+The price for this optimization is that the baseline compact profile does not perform a fresh X25519 exchange on every connection.
+
+That property is restored periodically through reanchoring.
+
+---
+
+# 186. Final Optimized GSP 1.1 Model
+
+The optimized GSP architecture is:
+
+```text
+                    FULL HANDSHAKE
+                          |
+                       X25519
+                          |
+                          v
+                  RESUMPTION ROOT
+                          |
+                          v
+                     HCC CACHE
+                          |
+                          v
+                    RATCHET ROOT
+                          |
+              +-----------+-----------+
+              |           |           |
+              v           v           v
+           Gen 1       Gen 2       Gen 3
+            18 B        18 B        18 B
+              |           |           |
+              +-----------+-----------+
+                          |
+                       REANCHOR
+                          |
+                       X25519
+                          |
+                          v
+                   NEW RATCHET ROOT
+```
+
+This allows GSP to optimize the common reconnection path without removing the stronger asymmetric security mechanism entirely.
+
+---
+
+# 187. Final Security Contract
+
+For normal authenticated GSP:
 
 ```text
 NO VERIFIED RESPONDER
@@ -4050,13 +4477,49 @@ NO VERIFIED RESPONDER
 NO AUTHENTICATED APPLICATION DATA
 ```
 
-For Responder-side application delivery:
+For Responder-side delivery:
 
 ```text
 NO VERIFIED INITIATOR
         |
         v
 NO APPLICATION DELIVERY
+```
+
+For HCC:
+
+```text
+CACHE_ID != AUTHENTICATION
+
+CACHE HIT != AUTHENTICATION
+
+COMPACT AUTHENTICATOR
+        |
+        v
+RATCHET AUTHENTICATION
+        |
+        v
+FINISHED AUTHENTICATION
+```
+
+For the compact profile:
+
+```text
+18 BYTES
+    =
+COMPLETE COMPACT CONTROL REQUEST
+```
+
+For Forward Secrecy:
+
+```text
+COMPACT RATCHET
+    =
+protected previous state + limited future secrecy
+
+X25519 REANCHOR
+    =
+fresh asymmetric entropy + restoration of strong PFS
 ```
 
 For AEAD:
@@ -4070,240 +4533,53 @@ ONE NONCE
 ONE UNIQUE ENCRYPTED RECORD
 ```
 
-A nonce MUST NEVER be reused with the same key.
-
-A sequence number MUST NEVER wrap under the same key.
-
-A sequence number MAY start at zero.
-
-A sequence number MAY be reset after a successful key change.
-
-For HCC:
-
-```text
-CACHE_ID != AUTHENTICATION
-
-CACHE HIT != AUTHENTICATION
-
-EXPIRED CACHE != VALID SESSION
-
-INVALID CACHE -> FULL HANDSHAKE
-
-RESUMPTION -> FRESH SESSION KEYS
-```
+No `(Key, Nonce)` pair may ever be reused.
 
 ---
 
-# 184. Final Optimized GSP 1.1 Handshake
+# 188. Final Principle
 
-The canonical optimized authenticated GSP 1.1 handshake is:
-
-1. Initiator generates fresh random state.
-
-2. Initiator generates a fresh ephemeral X25519 key pair.
-
-3. Initiator sends:
-
-```text
-HELLO
-+ supported versions
-+ supported ciphers
-+ supported KEX
-+ supported authentication
-+ capabilities
-+ random
-+ X25519 public key
-```
-
-4. Responder validates `HELLO`.
-
-5. Responder selects:
-
-```text
-version
-cipher
-KEX
-authentication
-compression
-capabilities
-```
-
-6. Responder generates fresh random state.
-
-7. Responder generates a fresh ephemeral X25519 key pair.
-
-8. Responder creates the Responder pre-authentication context.
-
-9. Responder creates the required authentication proof.
-
-10. Responder sends:
-
-```text
-HELLO_ACK
-+ selected parameters
-+ random
-+ X25519 public key
-+ responder identity
-+ responder authentication proof
-```
-
-11. Initiator validates the response.
-
-12. Initiator verifies the Responder authentication proof.
-
-13. If authentication fails:
-
-```text
-HANDSHAKE FAILED
-```
-
-14. If authentication succeeds, the Initiator is permitted to proceed with authenticated 1-RTT application DATA.
-
-15. Both peers calculate:
-
-```text
-X25519 shared secret
-```
-
-16. Both peers derive:
-
-```text
-handshake secrets
-traffic keys
-Finished keys
-```
-
-17. Both peers construct the final canonical transcript.
-
-18. Initiator sends:
-
-```text
-FINISH
-+ Initiator authentication
-+ Finished verification
-+ optional encrypted application DATA
-```
-
-19. Responder verifies:
-
-```text
-Initiator authentication
-Finished verification
-transcript
-AEAD
-replay state
-```
-
-20. Responder delivers application DATA only after successful verification.
-
-21. Responder sends:
-
-```text
-FINISH_ACK
-```
-
-22. Initiator verifies `FINISH_ACK`.
-
-23. Both peers enter:
-
-```text
-ESTABLISHED
-```
-
-24. A successful full handshake MAY create an HCC context.
-
-25. Future connections MAY use the HCC compact resumption profile.
-
-26. Every resumed session derives fresh traffic keys.
-
-27. PFS-enabled resumed sessions use fresh X25519 ephemeral keys.
-
-28. Traffic keys MAY be rotated using `KEY_UPDATE`.
-
-29. Sequence numbers MUST never wrap under a single key.
-
-30. The session terminates using:
-
-```text
-CLOSE
-```
-
----
-
-# 185. Final HCC Contract
-
-HCC exists to reduce repeated handshake metadata.
-
-The first connection may be larger:
-
-```text
-FULL HANDSHAKE
-       |
-       v
-CREATE CACHE
-```
-
-Future connections may use:
-
-```text
-18-BYTE HCC REFERENCE
-       +
-FRESH CRYPTOGRAPHIC MATERIAL
-       +
-RESUMPTION AUTHENTICATION
-```
-
-The compact reference is:
-
-```text
-TYPE        1 byte
-FLAGS       1 byte
-CACHE_ID    8 bytes
-GENERATION  8 bytes
---------------------
-TOTAL       18 bytes
-```
-
-The complete secure resumed handshake is larger than 18 bytes.
-
-The target for the complete compact cryptographic exchange is approximately:
-
-```text
-~80–120 bytes
-```
-
-when the selected profile allows it.
-
-A larger handshake is always preferable to removing a required security property.
-
----
-
-# 186. Final Principle
-
-The GSP 1.1 handshake follows four fundamental rules:
+GSP HCC follows four fundamental rules:
 
 ```text
 FIRST CONNECTION:
-    SEND + AUTHENTICATE + CACHE
+    AUTHENTICATE + ESTABLISH + CACHE
 
-SUBSEQUENT CONNECTION:
-    REFERENCE + PROVE + FRESH KEYS
+NORMAL RECONNECTION:
+    18-BYTE REFERENCE + RATCHET + PROVE
+
+PERIODIC RECONNECTION:
+    REANCHOR WITH FRESH X25519
 
 AUTHENTICATED 1-RTT:
     VERIFY RESPONDER BEFORE DATA
-
-HCC:
-    OPTIMIZE THE HANDSHAKE
-    DO NOT REPLACE THE SECURITY
 ```
 
-The cache is an optimization mechanism.
+The compact HCC mechanism exists to reduce:
 
-The cryptographic handshake remains the security mechanism.
+```text
+bytes
+CPU cost
+latency
+repeated negotiation
+```
+
+It does not remove:
+
+```text
+authentication
+Finished verification
+replay protection
+key separation
+context binding
+periodic asymmetric reanchoring
+```
+
+The 18-byte target is therefore achieved by changing the **key-establishment strategy**, not by incorrectly compressing a 32-byte X25519 public key.
 
 ---
 
-# 187. End of Specification
+# 189. End of Specification
 
 **GSP Handshake Protocol Specification**
 
@@ -4337,12 +4613,14 @@ The cryptographic handshake remains the security mechanism.
 
 **Forward Secrecy**
 
-**Key Update**
+**Symmetric HCC Ratchet**
+
+**Periodic X25519 Reanchoring**
+
+**18-Byte Compact HCC**
 
 **Session Resumption**
 
 **Handshake Context Cache**
-
-**18-Byte Compact HCC Reference**
 
 **END OF DOCUMENT**
