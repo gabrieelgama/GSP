@@ -1,139 +1,76 @@
- 🌐 GSP — Globalized Secure Protocol
+# GSP — Globalized Secure Protocol
 
-**GSP (Globalized Secure Protocol)** is a next-generation binary communication protocol that merges transport and application layers into a unified architecture. It delivers ultra-low latency, end-to-end encryption, and built-in security, enabling efficient, compact, and resilient data exchange with native P2P support and minimal overhead.
+GSP is an experimental binary communication protocol designed to combine transport and application functionality into a single protocol, with encryption enabled by default.
 
-> GSP is an evolution of the CGP (Cockatiel G Protocol) project.
+Originally developed as CGP (Cockatiel G Protocol), the project explores an alternative to conventional network communication stacks, focusing on low latency, reduced overhead and peer-to-peer communication.
 
----
+## Architecture
 
-## ⚡ Overview
+GSP provides two operating modes:
 
-GSP is designed to redefine how systems communicate by eliminating inefficiencies of traditional protocols such as HTTP, TCP, and UDP.
+- `gsp://` — Native GSP communication.
+- `gsp+http://` — Compatibility mode using an HTTP-GSP translator over HTTP/2, HTTP/3 or QUIC.
 
-- 🚀 Ultra-low latency
-- 🔐 End-to-end encryption by default
-- 📦 Compact binary packet structure
-- 🌍 Native P2P support
-- ⚙️ Minimal overhead (5–10%)
+## Packet structure
 
----
+| Type      | Description      |
+|-----------|------------------|
+| `0x00001` | Handshake        |
+| `0x00002` | Data             |
+| `0x00003` | Keep-alive       |
+| `0x00004` | Error            |
+| `0x00005` | Connection close |
 
-## 🧠 Architecture
+GSP uses binary packet encoding, with support for encryption, compression and header obfuscation.
 
-GSP operates in two modes:
+## Security
 
-- **Native Mode (`gsp://`)**  
-  Direct communication using GSP as transport + application layer
+The proposed security architecture includes:
 
-- **Compatibility Mode (`gsp+http://`)**  
-  Encapsulated over HTTP/2, HTTP/3, or QUIC via an HTTP-GSP translator
+- X25519 ephemeral key exchange
+- ChaCha20-Poly1305 authenticated encryption
+- HMAC-SHA256 authentication tokens
+- Handshake transcript binding
+- Periodic key rotation
+- Traffic padding and obfuscation
+- Cryptographic challenges and rate limiting
+- CRC32 for accidental corruption detection
 
----
+## Network model
 
-## 📦 Packet Structure
+GSP is designed around direct peer-to-peer connections, with optional distributed proxies for routing and accessibility.
 
-GSP uses structured binary packets:
-0x00001 → handshake
-0x00002 → data
-0x00003 → keep-alive
-0x00004 → error
-0x00005 → close
+The protocol also explores dynamic port allocation and binary endpoint identifiers as an alternative to conventional DNS-based addressing.
 
-All packets are:
-- Encrypted
-- Compressed
-- Obfuscated (no readable headers)
+## Features and development goals
 
----
+- Native peer-to-peer communication
+- Encrypted data streaming
+- Connection multiplexing
+- Device-based authentication
+- Hardware-bound badges
+- Encrypted network monitoring
+- Multi-application support
+- Global synchronized events
 
-## 🔐 Security
+## Performance
 
-Security is mandatory and built into the protocol:
+The current performance targets are:
 
-- 🔑 Ephemeral key exchange (X25519)
-- 🔒 Encryption (ChaCha20-Poly1305)
-- 🧾 Dynamic tokens (HMAC-SHA256)
-- 🧠 Transcript binding (anti-replay / anti-MITM)
-- 🔄 Continuous key rotation
-- 🎭 Traffic obfuscation (padding + junk data)
+- Protocol overhead between 5% and 10%.
+- Connection establishment below 50 ms where network conditions permit.
+- Up to 20% lower bandwidth usage compared to equivalent HTTPS workloads.
 
----
+These targets have not yet been validated through standardized benchmarks. Actual performance depends on network infrastructure, implementation and workload.
 
-## 🚀 Performance
+## Project status
 
-- ⚡ Latency: **It depends on the fiber optic infrastructure. ** (for authenticated local connections)
-- 🌐 Global handshake: **< 50 ms**
-- 📉 Bandwidth usage: up to **20% lower than HTTPS**
-- 🔁 Reduced round trips via multiplexing
+GSP is currently experimental and under development. The protocol specification and implementation are subject to change.
 
----
+## Contributing
 
-## 🌍 Network Model
+Contributions, technical discussions and feedback are welcome.
 
-- 🔗 Native P2P communication
-- 🌐 Distributed intelligent proxies
-- 🔄 Dynamic port switching
-- 🧬 DNS-independent (binary identifiers like `0xA3F2D1`)
+## License
 
----
-
-## 🧩 Features
-
-- 📺 Native encrypted streaming
-- 🖥️ Device-based identity system
-- 🏆 Hardware-bound badges
-- 🌌 Global synchronized events (GSP Saturdays)
-- 🔌 Multi-application support
-
----
-
-## 🛡️ Attack Mitigation
-
-- 🚫 Mandatory authentication
-- ⏱️ Intelligent rate limiting
-- 🤖 Anti-bot cryptographic challenges
-- ✔️ Packet integrity verification (CRC32)
-- 📊 Encrypted real-time monitoring
-
----
-
-## 🔓 Philosophy
-
-> “HTTP is a communication manual.  
-> GSP is the communication itself.”
-
-GSP is designed to be:
-- Open-source (public version)
-- Secure by default
-- High-performance by design
-- Independent from legacy infrastructure
-
----
-
-## 📜 License
-
-This project is licensed under the Apache License 2.0.
-
----
-
-## 🚧 Status
-
-⚠️ Experimental — under active development
-
----
-
-## 🤝 Contributing
-
-Contributions, ideas, and discussions are welcome.
-
----
-
-## ⭐ Inspiration
-
-GSP was inspired by the need for a faster, more secure, and more efficient communication model beyond traditional web protocols.
-
----
-
-## 📌 Author
-
-Created by **you** 😈
+GSP is licensed under the Apache License 2.0.
